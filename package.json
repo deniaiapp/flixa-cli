@@ -6,15 +6,18 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "bin": {
-    "flixa": "./dist/index.js"
+    "flixa": "dist/index.js"
   },
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
     "start": "bun run src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target node --format esm"
+    "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
   },
   "devDependencies": {
     "@types/bun": "latest",
