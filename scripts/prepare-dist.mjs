@@ -3,8 +3,8 @@ import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 const distPath = new URL("../dist/index.js", import.meta.url);
 const distSource = readFileSync(distPath, "utf8");
 
-const normalizedSource = distSource.startsWith("#!/usr/bin/env bun")
-  ? distSource.replace("#!/usr/bin/env bun", "#!/usr/bin/env node")
+const normalizedSource = distSource.match(/^(#![^\r\n]*\r?\n)+/)
+  ? distSource.replace(/^(#![^\r\n]*\r?\n)+/, "#!/usr/bin/env node\n")
   : `#!/usr/bin/env node\n${distSource}`;
 
 writeFileSync(distPath, normalizedSource);
