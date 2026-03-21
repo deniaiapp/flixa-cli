@@ -8,6 +8,10 @@
   "bin": {
     "flixa": "dist/index.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deniaiapp/flixa-cli"
+  },
   "files": [
     "dist"
   ],
