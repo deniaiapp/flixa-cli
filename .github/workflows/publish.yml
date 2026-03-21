@@ -3,9 +3,9 @@ name: Publish
 on:
   push:
     branches:
-      - main
+      - master
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   publish:
@@ -29,8 +29,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Publish canary
         if: github.ref_type == 'branch'
