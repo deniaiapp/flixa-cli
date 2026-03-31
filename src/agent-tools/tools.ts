@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { rgPath } from "@vscode/ripgrep";
 import {
   existsSync,
   mkdirSync,
@@ -7,12 +6,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { FunctionToolDefinition } from "../flixa/api.ts";
 
 const DEFAULT_BASH_TIMEOUT_MS = 30_000;
 const MAX_TOOL_OUTPUT_CHARS = 16_000;
 const MAX_READ_CHARS = 24_000;
+const require = createRequire(import.meta.url);
 
 export interface ToolCallRequest {
   name: string;
@@ -564,7 +565,22 @@ function toPortablePath(value: string): string {
 }
 
 function getRipgrepExecutable(): string {
-  return rgPath;
+  try {
+    const packageJsonPath = require.resolve("@vscode/ripgrep/package.json");
+    const rgExecutable = join(
+      dirname(packageJsonPath),
+      "bin",
+      process.platform === "win32" ? "rg.exe" : "rg",
+    );
+
+    if (existsSync(rgExecutable)) {
+      return rgExecutable;
+    }
+  } catch {
+    // Fall back to PATH-based resolution below.
+  }
+
+  return "rg";
 }
 
 function getShellInvocation(command: string): {
