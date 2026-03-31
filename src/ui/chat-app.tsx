@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { cwd } from "node:process";
 import React, {
@@ -23,9 +22,7 @@ import {
 } from "../sessions/store.ts";
 import { setPersistedModel } from "../config/store.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
-
-const require = createRequire(import.meta.url);
-const { version } = require("../../package.json") as { version: string };
+import { CLI_VERSION } from "../version.ts";
 
 type InteractiveChatOptions = {
   model: string;
@@ -705,7 +702,7 @@ function buildHeaderMessage(model: string, cwdValue: string): UiMessage {
     id: `header-${randomUUID()}`,
     role: "header",
     content: [
-      `${LOGO_LINES[0]}   Flixa CLI v${version}`,
+      `${LOGO_LINES[0]}   Flixa CLI v${CLI_VERSION}`,
       `${LOGO_LINES[1]}  ${model}`,
       `${LOGO_LINES[2]}   ${truncateMiddle(cwdValue, 64)}`,
     ].join("\n"),
