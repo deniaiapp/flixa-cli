@@ -23,6 +23,8 @@ export interface ToolCallRequest {
 
 export interface ToolExecutionContext {
   workspaceRoot: string;
+  allowShell: boolean;
+  allowFileEdits: boolean;
 }
 
 export interface ToolCallResult {
@@ -211,8 +213,27 @@ export const AGENT_TOOLS: RegisteredTool[] = [
   },
 ];
 
-export function getAgentToolDefinitions(): FunctionToolDefinition[] {
-  return AGENT_TOOLS.map((tool) => tool.definition);
+export function getAgentToolDefinitions(options?: {
+  allowShell?: boolean;
+  allowFileEdits?: boolean;
+}): FunctionToolDefinition[] {
+  const allowShell = options?.allowShell ?? true;
+  const allowFileEdits = options?.allowFileEdits ?? true;
+
+  return AGENT_TOOLS.filter((tool) => {
+    if (!allowShell && tool.definition.name === "Bash") {
+      return false;
+    }
+
+    if (
+      !allowFileEdits &&
+      (tool.definition.name === "Write" || tool.definition.name === "Edit")
+    ) {
+      return false;
+    }
+
+    return true;
+  }).map((tool) => tool.definition);
 }
 
 export async function executeToolCall(
@@ -250,6 +271,10 @@ async function runShellCommand(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
 ): Promise<ToolHandlerResult> {
+  if (!context.allowShell) {
+    throw new Error("Bash is disabled until auto mode is enabled.");
+  }
+
   const command = getRequiredString(args, "command");
   const timeoutMs =
     getOptionalInteger(args, "timeout_ms") ?? DEFAULT_BASH_TIMEOUT_MS;
@@ -308,6 +333,12 @@ async function writeFileTool(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
 ): Promise<ToolHandlerResult> {
+  if (!context.allowFileEdits) {
+    throw new Error(
+      "Write is disabled until accept edits or auto mode is enabled.",
+    );
+  }
+
   const filePath = resolveWorkspacePath(
     getRequiredString(args, "file_path"),
     context.workspaceRoot,
@@ -330,7 +361,7 @@ async function writeFileTool(
       null,
       2,
     ),
-    summary: `Wrote ${relativePath}`,
+    summary: `Write ${relativePath}`,
   };
 }
 
@@ -338,6 +369,12 @@ async function editFileTool(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
 ): Promise<ToolHandlerResult> {
+  if (!context.allowFileEdits) {
+    throw new Error(
+      "Edit is disabled until accept edits or auto mode is enabled.",
+    );
+  }
+
   const filePath = resolveWorkspacePath(
     getRequiredString(args, "file_path"),
     context.workspaceRoot,
@@ -372,7 +409,7 @@ async function editFileTool(
       null,
       2,
     ),
-    summary: `Edited ${relativePath}`,
+    summary: `Edit ${relativePath}`,
   };
 }
 
@@ -446,7 +483,7 @@ async function globTool(
 
   return {
     output: JSON.stringify({ files: normalized }, null, 2),
-    summary: `Listed ${normalized.length} files`,
+    summary: `Glob listed ${normalized.length} files`,
   };
 }
 

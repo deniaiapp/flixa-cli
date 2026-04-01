@@ -1,25 +1,33 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ChatMessage } from "../flixa/api.ts";
+import { FLIXA_SESSIONS_DIR, enforcePrivateFile, ensurePrivateDir } from "../security/paths.ts";
 
 export interface StoredChatSession {
   id: string;
   cwd: string;
   model: string;
   system?: string;
+  autoMode?: boolean;
+  planMode?: boolean;
+  acceptEdits?: boolean;
   createdAt: string;
   updatedAt: string;
   history: ChatMessage[];
 }
 
-const SESSIONS_DIR = join(homedir(), ".flixa", "sessions");
+const SESSIONS_DIR = FLIXA_SESSIONS_DIR;
 
 export function createSession(
   cwdValue: string,
   model: string,
   system?: string,
+  modes?: {
+    autoMode?: boolean;
+    planMode?: boolean;
+    acceptEdits?: boolean;
+  },
 ): StoredChatSession {
   const now = new Date().toISOString();
   return {
@@ -27,6 +35,9 @@ export function createSession(
     cwd: resolve(cwdValue),
     model,
     system,
+    autoMode: modes?.autoMode ?? false,
+    planMode: modes?.planMode ?? false,
+    acceptEdits: modes?.acceptEdits ?? false,
     createdAt: now,
     updatedAt: now,
     history: [],
@@ -40,11 +51,12 @@ export function saveSession(session: StoredChatSession): void {
     cwd: resolve(session.cwd),
     updatedAt: new Date().toISOString(),
   };
-  writeFileSync(
-    getSessionPath(session.id),
-    JSON.stringify(next, null, 2) + "\n",
-    "utf-8",
-  );
+  const sessionPath = getSessionPath(session.id);
+  writeFileSync(sessionPath, JSON.stringify(next, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  enforcePrivateFile(sessionPath);
 }
 
 export function loadSessionById(sessionId: string): StoredChatSession | null {
@@ -57,6 +69,9 @@ export function loadSessionById(sessionId: string): StoredChatSession | null {
     return {
       ...parsed,
       cwd: resolve(parsed.cwd),
+      autoMode: parsed.autoMode ?? false,
+      planMode: parsed.planMode ?? false,
+      acceptEdits: parsed.acceptEdits ?? false,
       history: Array.isArray(parsed.history) ? parsed.history : [],
     };
   } catch {
@@ -91,7 +106,8 @@ export function formatRecentSessionLabel(session: StoredChatSession): string {
 }
 
 function ensureSessionsDir(): void {
-  mkdirSync(SESSIONS_DIR, { recursive: true });
+  mkdirSync(SESSIONS_DIR, { recursive: true, mode: 0o700 });
+  ensurePrivateDir(SESSIONS_DIR);
 }
 
 function getSessionPath(sessionId: string): string {

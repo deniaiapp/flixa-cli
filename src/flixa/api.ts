@@ -5,7 +5,7 @@ export const DEFAULT_FLIXA_BASE_URL =
 export const DEFAULT_FLIXA_MODEL =
   process.env.FLIXA_MODEL?.trim() ||
   process.env.OPENAI_MODEL?.trim() ||
-  "gpt-5.4";
+  "openai/gpt-5.4";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -42,6 +42,7 @@ export interface FlixaResponseOutputContent {
 export interface FlixaResponseOutputItem {
   type?: string;
   content?: FlixaResponseOutputContent[];
+  summary?: FlixaResponseOutputContent[];
   id?: string;
   call_id?: string;
   name?: string;
@@ -69,9 +70,59 @@ export interface CreateResponseOptions {
   toolChoice?: "auto" | "none";
 }
 
+export type FlixaModelTier = "free" | "plus" | "pro" | "max";
+
+export interface FlixaModelDefinition {
+  id: string;
+  label: string;
+  description: string;
+  tags: string[];
+  premium?: boolean;
+  tier: FlixaModelTier;
+}
+
+export interface AnthropicCompatibleModelDefinition {
+  type: "model";
+  id: string;
+  display_name: string;
+}
+
+export interface AnthropicCompatibleModelList {
+  data: AnthropicCompatibleModelDefinition[];
+  has_more: boolean;
+  first_id: string | null;
+  last_id: string | null;
+}
+
+export interface DeniUsageBucket {
+  category: "basic" | "premium";
+  unit: "requests" | "tokens";
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  periodStart: string;
+  periodEnd: string | null;
+}
+
+export interface DeniUsageInfo {
+  tier: FlixaModelTier;
+  planId: string | null;
+  status: string | null;
+  isTeam: boolean;
+  periodEnd: string | null;
+  maxModeEnabled: boolean;
+  maxModeEligible: boolean;
+  usage: DeniUsageBucket[];
+}
+
 export interface StreamResponseResult {
   text: string;
   response?: FlixaResponse;
+}
+
+export interface FlixaResponseDisplayParts {
+  assistantText: string;
+  thinkingText: string;
 }
 
 export function resolveFlixaApiKey(): string | null {
@@ -82,6 +133,41 @@ export function resolveFlixaApiKey(): string | null {
   if (openAiCompatibleApiKey) return openAiCompatibleApiKey;
 
   return getApiKey();
+}
+
+export async function fetchAvailableModels(options: {
+  apiKey: string;
+  baseUrl?: string;
+}): Promise<FlixaModelDefinition[]> {
+  const response = await fetch(`${resolveApiRoot(options.baseUrl)}/models`, {
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(await formatApiError(response));
+  }
+
+  const payload = (await response.json()) as unknown;
+  return extractModelDefinitions(payload);
+}
+
+export async function fetchDeniUsage(options: {
+  apiKey: string;
+  baseUrl?: string;
+}): Promise<DeniUsageInfo> {
+  const response = await fetch(`${resolveApiRoot(options.baseUrl)}/deni/usage`, {
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(await formatApiError(response));
+  }
+
+  return (await response.json()) as DeniUsageInfo;
 }
 
 export async function createResponse(
@@ -211,17 +297,11 @@ export async function streamResponse(
 }
 
 export function extractOutputText(response: FlixaResponse): string {
-  if (
-    typeof response.output_text === "string" &&
-    response.output_text.length > 0
-  ) {
-    return response.output_text;
-  }
+  return extractResponseDisplayParts(response).assistantText;
+}
 
-  return (response.output ?? [])
-    .flatMap((item) => item.content ?? [])
-    .map((content) => (typeof content.text === "string" ? content.text : ""))
-    .join("");
+export function extractThinkingText(response: FlixaResponse): string {
+  return extractResponseDisplayParts(response).thinkingText;
 }
 
 export function extractFunctionCalls(
@@ -291,6 +371,13 @@ function resolveBaseUrl(baseUrl?: string): string {
   return (baseUrl?.trim() || DEFAULT_FLIXA_BASE_URL).replace(/\/+$/, "");
 }
 
+export function resolveApiRoot(baseUrl?: string): string {
+  const normalizedBaseUrl = resolveBaseUrl(baseUrl);
+  return normalizedBaseUrl.endsWith("/agent")
+    ? normalizedBaseUrl.slice(0, -"/agent".length)
+    : normalizedBaseUrl;
+}
+
 async function formatApiError(response: Response): Promise<string> {
   const statusLine = `Flixa API request failed: ${response.status} ${response.statusText}`;
 
@@ -340,4 +427,166 @@ function safeParseJson(value: string): unknown {
 
 function isFlixaResponse(value: unknown): value is FlixaResponse {
   return typeof value === "object" && value !== null;
+}
+
+function extractResponseDisplayParts(
+  response: FlixaResponse,
+): FlixaResponseDisplayParts {
+  const outputItems = response.output ?? [];
+  const thinkingSegments: string[] = [];
+  const assistantSegments: string[] = [];
+
+  for (const item of outputItems) {
+    const itemType = normalizeItemType(item.type);
+    const content = item.content ?? [];
+    const summary = item.summary ?? [];
+
+    if (itemType === "reasoning" || itemType === "thinking") {
+      thinkingSegments.push(
+        ...extractTextSegments(summary),
+        ...extractTextSegments(content),
+      );
+      continue;
+    }
+
+    if (itemType === "message" || itemType === "output") {
+      assistantSegments.push(...extractNonThinkingContent(content));
+      thinkingSegments.push(...extractThinkingContent(content));
+      continue;
+    }
+
+    assistantSegments.push(...extractNonThinkingContent(content));
+    thinkingSegments.push(
+      ...extractTextSegments(summary),
+      ...extractThinkingContent(content),
+    );
+  }
+
+  if (
+    assistantSegments.length === 0 &&
+    typeof response.output_text === "string" &&
+    response.output_text.length > 0
+  ) {
+    assistantSegments.push(response.output_text);
+  }
+
+  return {
+    assistantText: joinSegments(assistantSegments),
+    thinkingText: joinSegments(thinkingSegments),
+  };
+}
+
+function extractNonThinkingContent(
+  contentItems: FlixaResponseOutputContent[],
+): string[] {
+  return contentItems
+    .filter((content) => !isThinkingType(content.type))
+    .flatMap((content) =>
+      typeof content.text === "string" && content.text.length > 0
+        ? [content.text]
+        : [],
+    );
+}
+
+function extractThinkingContent(
+  contentItems: FlixaResponseOutputContent[],
+): string[] {
+  return contentItems
+    .filter((content) => isThinkingType(content.type))
+    .flatMap((content) =>
+      typeof content.text === "string" && content.text.length > 0
+        ? [content.text]
+        : [],
+    );
+}
+
+function extractTextSegments(
+  contentItems: FlixaResponseOutputContent[],
+): string[] {
+  return contentItems.flatMap((content) =>
+    typeof content.text === "string" && content.text.length > 0
+      ? [content.text]
+      : [],
+  );
+}
+
+function normalizeItemType(value: string | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isThinkingType(value: string | undefined): boolean {
+  const normalized = normalizeItemType(value);
+  return (
+    normalized.includes("reasoning") ||
+    normalized.includes("thinking") ||
+    normalized.includes("summary")
+  );
+}
+
+function joinSegments(segments: string[]): string {
+  return segments
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function extractModelDefinitions(payload: unknown): FlixaModelDefinition[] {
+  if (Array.isArray(payload)) {
+    return payload.filter(isFlixaModelDefinition);
+  }
+
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Unexpected models response format.");
+  }
+
+  const wrappedData = (payload as AnthropicCompatibleModelList).data;
+  if (!Array.isArray(wrappedData)) {
+    throw new Error("Unexpected models response format.");
+  }
+
+  if (wrappedData.every(isFlixaModelDefinition)) {
+    return wrappedData;
+  }
+
+  if (wrappedData.every(isAnthropicCompatibleModelDefinition)) {
+    return wrappedData.map((model) => ({
+      id: model.id,
+      label: model.display_name,
+      description: "",
+      tags: ["anthropic-compatible"],
+      tier: "free",
+    }));
+  }
+
+  throw new Error("Unexpected models response format.");
+}
+
+function isFlixaModelDefinition(value: unknown): value is FlixaModelDefinition {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate["id"] === "string" &&
+    typeof candidate["label"] === "string" &&
+    typeof candidate["description"] === "string" &&
+    Array.isArray(candidate["tags"]) &&
+    typeof candidate["tier"] === "string"
+  );
+}
+
+function isAnthropicCompatibleModelDefinition(
+  value: unknown,
+): value is AnthropicCompatibleModelDefinition {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate["type"] === "model" &&
+    typeof candidate["id"] === "string" &&
+    typeof candidate["display_name"] === "string"
+  );
 }

@@ -3,6 +3,7 @@ import {
   createResponse,
   extractFunctionCalls,
   extractOutputText,
+  extractThinkingText,
   type ChatMessage,
   type FlixaResponse,
   type ResponseInputItem,
@@ -21,12 +22,17 @@ export interface AgentRunOptions {
   system?: string;
   baseUrl?: string;
   maxOutputTokens?: number;
+  autoMode?: boolean;
+  planMode?: boolean;
+  acceptEdits?: boolean;
   signal?: AbortSignal;
+  requestToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
   onEvent?: (event: AgentRunEvent) => void;
 }
 
 export interface AgentRunResult {
   finalText: string;
+  thinkingText?: string;
   finalResponse?: FlixaResponse;
   history: ChatMessage[];
 }
@@ -35,6 +41,14 @@ export type AgentRunEvent =
   | { type: "tool_start"; toolName: string; summary: string }
   | { type: "tool_result"; toolName: string; summary: string; output: string }
   | { type: "assistant_text"; text: string };
+
+export interface ToolApprovalRequest {
+  toolName: "Bash" | "Write" | "Edit";
+  title: string;
+  reason: string;
+  summary: string;
+  details: string[];
+}
 
 const DEFAULT_AGENT_SYSTEM_PROMPT = [
   "You are Flixa CLI, an agentic coding assistant.",
@@ -50,10 +64,15 @@ export async function runAgentTurn(
   options: AgentRunOptions,
 ): Promise<AgentRunResult> {
   const workspaceRoot = cwd();
-  const context: ToolExecutionContext = { workspaceRoot };
-  const combinedSystemPrompt = options.system?.trim()
-    ? `${DEFAULT_AGENT_SYSTEM_PROMPT}\n\n${options.system.trim()}`
-    : DEFAULT_AGENT_SYSTEM_PROMPT;
+  const allowFileEdits = options.planMode !== true;
+  const allowShell = options.planMode !== true;
+  const context: ToolExecutionContext = {
+    workspaceRoot,
+    allowShell,
+    allowFileEdits,
+  };
+  const combinedSystemPrompt = buildSystemPrompt(options);
+  const tools = getAgentToolDefinitions({ allowShell, allowFileEdits });
 
   const baseHistory = [
     ...options.history,
@@ -68,7 +87,7 @@ export async function runAgentTurn(
     baseUrl: options.baseUrl,
     maxOutputTokens: options.maxOutputTokens,
     signal: options.signal,
-    tools: getAgentToolDefinitions(),
+    tools,
     toolChoice: "auto",
   });
 
@@ -76,9 +95,11 @@ export async function runAgentTurn(
     const functionCalls = extractFunctionCalls(response);
     if (functionCalls.length === 0) {
       const finalText = extractOutputText(response);
+      const thinkingText = extractThinkingText(response);
       options.onEvent?.({ type: "assistant_text", text: finalText });
       return {
         finalText,
+        thinkingText,
         finalResponse: response,
         history: [...baseHistory, { role: "assistant", content: finalText }],
       };
@@ -86,10 +107,46 @@ export async function runAgentTurn(
 
     const toolOutputs: ResponseInputItem[] = [];
     for (const functionCall of functionCalls) {
+      const summary = summarizeToolCall(
+        functionCall.name,
+        functionCall.argumentsText,
+      );
+      const approvalRequest = getToolApprovalRequest(
+        functionCall.name,
+        functionCall.argumentsText,
+        options,
+      );
+      if (approvalRequest) {
+        const approved = await requestToolApproval(
+          approvalRequest,
+          options.requestToolApproval,
+        );
+        if (!approved) {
+          const deniedResult = createDeniedToolCallResult(
+            functionCall.name,
+            functionCall.callId,
+            summary,
+            "Permission denied by user.",
+          );
+          options.onEvent?.({
+            type: "tool_result",
+            toolName: deniedResult.name,
+            summary: deniedResult.summary,
+            output: deniedResult.output,
+          });
+          toolOutputs.push({
+            type: "function_call_output",
+            call_id: deniedResult.callId,
+            output: deniedResult.output,
+          });
+          continue;
+        }
+      }
+
       options.onEvent?.({
         type: "tool_start",
         toolName: functionCall.name,
-        summary: summarizeToolCall(functionCall.name, functionCall.argumentsText),
+        summary,
       });
 
       const result = await executeToolCall(
@@ -124,7 +181,7 @@ export async function runAgentTurn(
       baseUrl: options.baseUrl,
       maxOutputTokens: options.maxOutputTokens,
       signal: options.signal,
-      tools: getAgentToolDefinitions(),
+      tools,
       toolChoice: "auto",
     });
   }
@@ -133,8 +190,187 @@ export async function runAgentTurn(
 }
 
 function summarizeToolCall(toolName: string, argumentsText: string): string {
+  const parsed = safeParseArguments(argumentsText);
+  const filePath = getStringArgument(parsed, "file_path");
+  if (filePath) {
+    return filePath;
+  }
+
+  const path = getStringArgument(parsed, "path");
+  const pattern = getStringArgument(parsed, "pattern");
+  const command = getStringArgument(parsed, "command");
+
+  if (command) {
+    return shorten(command, 100);
+  }
+
+  if (toolName === "Grep" && pattern) {
+    return path ? `${pattern} in ${path}` : pattern;
+  }
+
+  if (toolName === "Glob" && path) {
+    return path;
+  }
+
+  if (pattern) {
+    return pattern;
+  }
+
+  if (path) {
+    return path;
+  }
+
   const compact = argumentsText.replace(/\s+/g, " ").trim();
-  const shortened =
-    compact.length > 100 ? `${compact.slice(0, 100)}…` : compact;
-  return `${toolName} ${shortened}`;
+  return compact ? shorten(compact, 100) : toolName;
+}
+
+function getToolApprovalRequest(
+  toolName: string,
+  argumentsText: string,
+  options: Pick<AgentRunOptions, "autoMode" | "acceptEdits" | "planMode">,
+): ToolApprovalRequest | null {
+  if (options.planMode) {
+    return null;
+  }
+
+  const parsed = safeParseArguments(argumentsText);
+  switch (toolName) {
+    case "Bash":
+      if (options.autoMode) {
+        return null;
+      }
+      return {
+        toolName,
+        title: "Approve bash command?",
+        reason: "Shell commands require approval in this mode.",
+        summary: summarizeToolCall(toolName, argumentsText),
+        details: [
+          `command: ${previewForDisplay(getStringArgument(parsed, "command"))}`,
+        ],
+      };
+    case "Write":
+      if (options.autoMode || options.acceptEdits) {
+        return null;
+      }
+      return {
+        toolName,
+        title: "Approve file write?",
+        reason: "File writes require approval in default mode.",
+        summary: summarizeToolCall(toolName, argumentsText),
+        details: [
+          `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
+          `bytes: ${String(
+            Buffer.byteLength(
+              getStringArgument(parsed, "content") ?? "",
+              "utf-8",
+            ),
+          )}`,
+        ],
+      };
+    case "Edit":
+      if (options.autoMode || options.acceptEdits) {
+        return null;
+      }
+      return {
+        toolName,
+        title: "Approve file edit?",
+        reason: "File edits require approval in default mode.",
+        summary: summarizeToolCall(toolName, argumentsText),
+        details: [
+          `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
+          `replace: ${previewForDisplay(getStringArgument(parsed, "old_string"))}`,
+          `with: ${previewForDisplay(getStringArgument(parsed, "new_string"))}`,
+        ],
+      };
+    default:
+      return null;
+  }
+}
+
+async function requestToolApproval(
+  request: ToolApprovalRequest,
+  approvalHandler: AgentRunOptions["requestToolApproval"],
+): Promise<boolean> {
+  if (!approvalHandler) {
+    return false;
+  }
+
+  return approvalHandler(request);
+}
+
+function createDeniedToolCallResult(
+  toolName: string,
+  callId: string,
+  summary: string,
+  reason: string,
+): {
+  name: string;
+  callId: string;
+  output: string;
+  summary: string;
+} {
+  return {
+    name: toolName,
+    callId,
+    output: JSON.stringify(
+      {
+        ok: false,
+        tool: toolName,
+        denied: true,
+        reason,
+      },
+      null,
+      2,
+    ),
+    summary: `Denied ${toolName} ${summary}`.trim(),
+  };
+}
+
+function buildSystemPrompt(options: AgentRunOptions): string {
+  const promptSections = [DEFAULT_AGENT_SYSTEM_PROMPT];
+
+  if (options.planMode) {
+    promptSections.push(
+      "Plan mode is enabled. You may inspect the repository, read files, and analyze code, but you must not make changes or propose that changes were applied. Produce a concrete implementation plan with relevant files, steps, and risks.",
+    );
+  }
+
+  if (options.system?.trim()) {
+    promptSections.push(options.system.trim());
+  }
+
+  return promptSections.join("\n\n");
+}
+
+function safeParseArguments(argumentsText: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(argumentsText) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function getStringArgument(
+  args: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = args[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function shorten(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+}
+
+function previewForDisplay(value: string | undefined): string {
+  if (!value) {
+    return "(empty)";
+  }
+
+  return shorten(value.replace(/\s+/g, " ").trim(), 120);
 }
