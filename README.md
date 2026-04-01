@@ -19,3 +19,18 @@ or
 ```sh
 bun install -g @deniai/flixa
 ```
+
+## Usage
+
+```sh
+flixa login
+flixa chat
+```
+
+## Development
+
+```sh
+bun install
+bun run dev
+bun run build
+```

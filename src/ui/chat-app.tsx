@@ -13,8 +13,11 @@ import TextInput from "ink-text-input";
 import {
   runAgentTurn,
   type ToolApprovalRequest,
+  type ToolSafetyReviewResult,
 } from "../agent-tools/runner.ts";
 import {
+  createResponse,
+  extractOutputText,
   fetchAvailableModels,
   fetchDeniUsage,
   type ChatMessage,
@@ -30,7 +33,10 @@ import {
   loadSessionById,
   saveSession,
 } from "../sessions/store.ts";
-import { setPersistedModel, setPersistedModeDefaults } from "../config/store.ts";
+import {
+  setPersistedModel,
+  setPersistedModeDefaults,
+} from "../config/store.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
 
@@ -43,6 +49,7 @@ type InteractiveChatOptions = {
   autoMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
+  modeOverride: "default" | "accept-edits" | "plan" | "auto" | null;
 };
 
 type InteractiveChatAppProps = {
@@ -82,7 +89,7 @@ const COLORS = {
   warning: "magentaBright",
 } as const;
 
-const LOGO_LINES = ["▐▛███▜▌", "▝▜█████▛▘", "  ▘▘ ▝▝"];
+const LOGO_LINES = [" /\\_/\\\\", "(=^.^=)", '(")_(")'];
 const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "/help", description: "show available commands" },
   {
@@ -125,6 +132,7 @@ function InteractiveChatApp({
       session.history,
       session.model || options.model,
       session.cwd,
+      session.model || options.model,
     ),
   );
   const [conversation, setConversation] = useState<ChatMessage[]>(
@@ -135,14 +143,21 @@ function InteractiveChatApp({
   const [currentModel, setCurrentModel] = useState(
     session.model || options.model,
   );
+  const [currentModelLabel, setCurrentModelLabel] = useState(
+    session.model || options.model,
+  );
+  const initialModes = useMemo(
+    () => getInitialModes(options, session),
+    [options, session],
+  );
   const [autoMode, setAutoMode] = useState(
-    session.autoMode ?? options.autoMode,
+    initialModes.autoMode,
   );
   const [planMode, setPlanMode] = useState(
-    session.planMode ?? options.planMode,
+    initialModes.planMode,
   );
   const [acceptEdits, setAcceptEdits] = useState(
-    session.acceptEdits ?? options.acceptEdits,
+    initialModes.acceptEdits,
   );
   const [selectedCommandSuggestionIndex, setSelectedCommandSuggestionIndex] =
     useState(0);
@@ -249,7 +264,7 @@ function InteractiveChatApp({
       abortRef.current?.abort();
       abortRef.current = null;
       setMessages([
-        buildHeaderMessage(currentModel, cwdValue),
+        buildHeaderMessage(currentModelLabel, cwdValue),
         ...(reason
           ? [{ id: randomUUID(), role: "system" as const, content: reason }]
           : []),
@@ -257,7 +272,7 @@ function InteractiveChatApp({
       setConversation([]);
       setStatus("Conversation cleared");
     },
-    [currentModel, cwdValue],
+    [currentModelLabel, cwdValue],
   );
 
   const startFreshConversation = useCallback(() => {
@@ -275,7 +290,14 @@ function InteractiveChatApp({
     });
     saveSession(nextSession);
     setActiveSession(nextSession);
-    setMessages(buildInitialMessages([], currentModel, nextSession.cwd));
+    setMessages(
+      buildInitialMessages(
+        [],
+        currentModel,
+        nextSession.cwd,
+        currentModelLabel,
+      ),
+    );
     setConversation([]);
     setInput("");
     setStatus("Ready");
@@ -283,6 +305,7 @@ function InteractiveChatApp({
     acceptEdits,
     autoMode,
     currentModel,
+    currentModelLabel,
     cwdValue,
     options.system,
     planMode,
@@ -308,6 +331,49 @@ function InteractiveChatApp({
       return updatedSession;
     },
     [],
+  );
+
+  const reviewToolSafety = useCallback(
+    async (request: ToolApprovalRequest): Promise<ToolSafetyReviewResult> => {
+      try {
+        const response = await createResponse({
+          apiKey,
+          model: currentModel,
+          system:
+            "You are a safety reviewer for CLI tool calls. Respond with a short verdict only. Approve only if the request is narrowly scoped, justified by the provided reason, and appears safe for the local workspace. Reject if the reason is missing, vague, risky, destructive, or unrelated to the requested action. Format: SAFE: <brief reason> or UNSAFE: <brief reason>.",
+          input: [
+            {
+              role: "user",
+              content: [
+                `Tool: ${request.toolName}`,
+                `Title: ${request.title}`,
+                `Reason: ${request.reason}`,
+                `Summary: ${request.summary}`,
+                `Details:\n${request.details.join("\n")}`,
+              ].join("\n"),
+            },
+          ],
+          baseUrl: options.baseUrl,
+          maxOutputTokens: 120,
+          toolChoice: "none",
+        });
+        const verdict = extractOutputText(response).trim() || "UNSAFE: Empty review response.";
+        const normalizedVerdict = verdict.toUpperCase();
+        return {
+          safe: normalizedVerdict.startsWith("SAFE:"),
+          verdict,
+        };
+      } catch (error) {
+        return {
+          safe: false,
+          verdict:
+            error instanceof Error
+              ? `UNSAFE: Safety review failed: ${error.message}`
+              : `UNSAFE: Safety review failed: ${String(error)}`,
+        };
+      }
+    },
+    [apiKey, currentModel, options.baseUrl],
   );
 
   const sendPrompt = useCallback(
@@ -344,6 +410,7 @@ function InteractiveChatApp({
           planMode,
           acceptEdits,
           signal: abortController.signal,
+          reviewToolSafety,
           requestToolApproval: (request) => {
             setPendingApproval(request);
             setApprovalChoice("approve");
@@ -446,6 +513,7 @@ function InteractiveChatApp({
       autoMode,
       planMode,
       acceptEdits,
+      reviewToolSafety,
       settleApprovalRequest,
     ],
   );
@@ -455,6 +523,7 @@ function InteractiveChatApp({
       const nextModel = nextSession.model || options.model;
       setActiveSession(nextSession);
       setCurrentModel(nextModel);
+      setCurrentModelLabel(nextModel);
       setPersistedModel(nextModel);
       setConversation(nextSession.history);
       setAutoMode(nextSession.autoMode ?? options.autoMode);
@@ -471,11 +540,18 @@ function InteractiveChatApp({
           nextSession.history,
           nextModel,
           nextSession.cwd,
+          currentModelLabel,
         ),
       ]);
       setStatus(`Resumed ${nextSession.id.slice(0, 8)}`);
     },
-    [options.acceptEdits, options.autoMode, options.model, options.planMode],
+    [
+      currentModelLabel,
+      options.acceptEdits,
+      options.autoMode,
+      options.model,
+      options.planMode,
+    ],
   );
 
   const closeResumeSelector = useCallback((nextStatus = "Ready") => {
@@ -508,6 +584,7 @@ function InteractiveChatApp({
   const applyModelSelection = useCallback(
     (nextModel: string, label?: string) => {
       setCurrentModel(nextModel);
+      setCurrentModelLabel(label ?? nextModel);
       setPersistedModel(nextModel);
       const nextSession = {
         ...activeSession,
@@ -525,14 +602,47 @@ function InteractiveChatApp({
       );
       setStatus(`Model: ${label ?? nextModel}`);
     },
-    [
-      acceptEdits,
-      activeSession,
-      appendSystemMessage,
-      autoMode,
-      planMode,
-    ],
+    [acceptEdits, activeSession, appendSystemMessage, autoMode, planMode],
   );
+
+  useEffect(() => {
+    let canceled = false;
+
+    const syncCurrentModelLabel = async (): Promise<void> => {
+      try {
+        const models = await fetchAvailableModels({
+          apiKey,
+          baseUrl: options.baseUrl,
+        });
+        if (canceled) {
+          return;
+        }
+
+        const matchedModel =
+          models.find((model) => model.id === currentModel) ??
+          models.find(
+            (model) =>
+              stripModelProvider(model.id) === stripModelProvider(currentModel),
+          );
+
+        if (matchedModel) {
+          setCurrentModelLabel(matchedModel.label);
+        } else {
+          setCurrentModelLabel(currentModel);
+        }
+      } catch {
+        if (!canceled) {
+          setCurrentModelLabel(currentModel);
+        }
+      }
+    };
+
+    void syncCurrentModelLabel();
+
+    return () => {
+      canceled = true;
+    };
+  }, [apiKey, currentModel, options.baseUrl]);
 
   const openModelSelector = useCallback(async () => {
     if (loading) {
@@ -562,13 +672,7 @@ function InteractiveChatApp({
       appendSystemMessage(`Failed to load models: ${message}`);
       setStatus("Model selector failed");
     }
-  }, [
-    apiKey,
-    appendSystemMessage,
-    currentModel,
-    loading,
-    options.baseUrl,
-  ]);
+  }, [apiKey, appendSystemMessage, currentModel, loading, options.baseUrl]);
 
   const showUsage = useCallback(async () => {
     if (loading) {
@@ -919,7 +1023,7 @@ function InteractiveChatApp({
             borderLeft={false}
             borderRight={false}
             width="100%"
-            paddingLeft={2}
+            paddingLeft={1}
             paddingRight={1}
           >
             <Text color={COLORS.user}>› </Text>
@@ -1243,7 +1347,10 @@ function ModelSelector({
               {isSelected ? "> " : "  "}
               {model.label}
             </Text>
-            <Text color={isSelected ? COLORS.system : COLORS.dim} wrap="truncate">
+            <Text
+              color={isSelected ? COLORS.system : COLORS.dim}
+              wrap="truncate"
+            >
               {`  ${truncateEnd(secondaryLine, 84)}`}
             </Text>
             <Text color={COLORS.dim} wrap="truncate">
@@ -1299,9 +1406,10 @@ function buildInitialMessages(
   history: ChatMessage[],
   model: string,
   cwdValue: string,
+  modelLabel: string = model,
 ): UiMessage[] {
   return [
-    buildHeaderMessage(model, cwdValue),
+    buildHeaderMessage(modelLabel, cwdValue),
     ...history.map((message) => ({
       id: randomUUID(),
       role: message.role,
@@ -1310,14 +1418,14 @@ function buildInitialMessages(
   ];
 }
 
-function buildHeaderMessage(model: string, cwdValue: string): UiMessage {
+function buildHeaderMessage(modelLabel: string, cwdValue: string): UiMessage {
   return {
     id: `header-${randomUUID()}`,
     role: "header",
     content: [
-      `${LOGO_LINES[0]}   Flixa CLI v${CLI_VERSION}`,
-      `${LOGO_LINES[1]}  ${model}`,
-      `${LOGO_LINES[2]}   ${truncateMiddle(cwdValue, 64)}`,
+      `${LOGO_LINES[0]}  Flixa CLI v${CLI_VERSION}`,
+      `${LOGO_LINES[1]}  ${modelLabel}`,
+      `${LOGO_LINES[2]}  ${truncateMiddle(cwdValue, 64)}`,
     ].join("\n"),
   };
 }
@@ -1620,6 +1728,32 @@ function getModeFlags(mode: FooterModeKey | null): {
     autoMode: mode === "auto",
     planMode: mode === "plan",
     acceptEdits: mode === "accept-edits",
+  };
+}
+
+function getInitialModes(
+  options: Pick<
+    InteractiveChatOptions,
+    "autoMode" | "planMode" | "acceptEdits" | "modeOverride"
+  >,
+  session: Pick<StoredChatSession, "autoMode" | "planMode" | "acceptEdits">,
+): {
+  autoMode: boolean;
+  planMode: boolean;
+  acceptEdits: boolean;
+} {
+  if (options.modeOverride) {
+    return {
+      autoMode: options.autoMode,
+      planMode: options.planMode,
+      acceptEdits: options.acceptEdits,
+    };
+  }
+
+  return {
+    autoMode: session.autoMode ?? options.autoMode,
+    planMode: session.planMode ?? options.planMode,
+    acceptEdits: session.acceptEdits ?? options.acceptEdits,
   };
 }
 

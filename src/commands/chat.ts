@@ -5,6 +5,8 @@ import type { Command } from "commander";
 import {
   DEFAULT_FLIXA_BASE_URL,
   DEFAULT_FLIXA_MODEL,
+  createResponse,
+  extractOutputText,
   resolveFlixaApiKey,
   type ChatMessage,
   type FlixaResponse,
@@ -12,6 +14,7 @@ import {
 import {
   runAgentTurn,
   type ToolApprovalRequest,
+  type ToolSafetyReviewResult,
 } from "../agent-tools/runner.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import { runInteractiveChatApp } from "../ui/chat-app.tsx";
@@ -58,8 +61,11 @@ type ChatOptions = {
   autoMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
+  modeOverride: FooterModeOverride;
   yolo: boolean;
 };
+
+type FooterModeOverride = "default" | "accept-edits" | "plan" | "auto" | null;
 
 export function registerChatCommand(program: Command): void {
   applyChatOptions(program);
@@ -115,11 +121,17 @@ function applyChatOptions(command: Command): void {
     .option("--json", "Print the raw JSON response")
     .option("--no-stream", "Disable streaming output")
     .option("--max-output-tokens <tokens>", "Limit response tokens")
-    .option("-c, --continue", "Continue the latest conversation in this directory")
-    .option("-r, --resume [sessionId]", "Resume a conversation by session id or pick from recent")
-    .option("--auto", "Enable auto mode")
+    .option(
+      "-c, --continue",
+      "Continue the latest conversation in this directory",
+    )
+    .option(
+      "-r, --resume [sessionId]",
+      "Resume a conversation by session id or pick from recent",
+    )
+    .option("--auto", "Start in auto mode")
     .option("--plan", "Start in plan mode")
-    .option("--accept-edits", "Allow file editing tools")
+    .option("--accept-edits", "Start in accept edits mode")
     .option("--yolo", "Always allow approvals for one-shot runs");
 }
 
@@ -174,7 +186,8 @@ function normalizeOptions(rawOptions: RawChatOptions): ChatOptions {
   const modeFlags = resolveModeFlags(rawOptions, defaults);
 
   return {
-    model: rawOptions.model?.trim() || getPersistedModel() || DEFAULT_FLIXA_MODEL,
+    model:
+      rawOptions.model?.trim() || getPersistedModel() || DEFAULT_FLIXA_MODEL,
     system: undefined,
     rawSystem: rawOptions.system?.trim() || undefined,
     stream: rawOptions.stream ?? true,
@@ -186,6 +199,7 @@ function normalizeOptions(rawOptions: RawChatOptions): ChatOptions {
     autoMode: modeFlags.autoMode,
     planMode: modeFlags.planMode,
     acceptEdits: modeFlags.acceptEdits,
+    modeOverride: modeFlags.modeOverride,
     yolo: rawOptions.yolo ?? false,
   };
 }
@@ -220,12 +234,18 @@ async function runSingleTurn(
 ): Promise<void> {
   let assistantText = "";
   let rawResponse: FlixaResponse | undefined;
+  const reviewToolSafety = createToolSafetyReviewer(
+    apiKey,
+    options.model,
+    options.baseUrl,
+  );
 
   if (!options.json) {
-    process.stdout.write(chalk.green("flixa> "));
+    process.stdout.write(chalk.green("flixa: "));
   }
 
   try {
+    const resolvedModes = getEffectiveModes(options, session);
     const result = await runAgentTurn({
       apiKey,
       model: options.model,
@@ -234,9 +254,10 @@ async function runSingleTurn(
       system: options.system,
       baseUrl: options.baseUrl,
       maxOutputTokens: options.maxOutputTokens,
-      autoMode: session.autoMode ?? options.autoMode,
-      planMode: session.planMode ?? options.planMode,
-      acceptEdits: session.acceptEdits ?? options.acceptEdits,
+      autoMode: resolvedModes.autoMode,
+      planMode: resolvedModes.planMode,
+      acceptEdits: resolvedModes.acceptEdits,
+      reviewToolSafety,
       requestToolApproval: options.yolo
         ? allowAllToolApprovals
         : options.json || !process.stdin.isTTY || !process.stdout.isTTY
@@ -250,7 +271,10 @@ async function runSingleTurn(
               return;
             }
 
-            if (event.type === "tool_result" && event.summary.startsWith("Denied ")) {
+            if (
+              event.type === "tool_result" &&
+              event.summary.startsWith("Denied ")
+            ) {
               process.stdout.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
             }
           },
@@ -261,9 +285,9 @@ async function runSingleTurn(
     session.history = result.history;
     session.model = options.model;
     session.system = options.system;
-    session.autoMode = session.autoMode ?? options.autoMode;
-    session.planMode = session.planMode ?? options.planMode;
-    session.acceptEdits = session.acceptEdits ?? options.acceptEdits;
+    session.autoMode = resolvedModes.autoMode;
+    session.planMode = resolvedModes.planMode;
+    session.acceptEdits = resolvedModes.acceptEdits;
     setPersistedModel(options.model);
     saveSession(session);
 
@@ -292,7 +316,9 @@ async function runSingleTurn(
   }
 }
 
-async function resolveSession(options: ChatOptions): Promise<StoredChatSession> {
+async function resolveSession(
+  options: ChatOptions,
+): Promise<StoredChatSession> {
   const currentCwd = cwd();
 
   if (options.resume) {
@@ -371,32 +397,143 @@ function resolveModeFlags(
   autoMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
+  modeOverride: FooterModeOverride;
 } {
   if (rawOptions.plan) {
-    return { autoMode: false, planMode: true, acceptEdits: false };
+    return {
+      autoMode: false,
+      planMode: true,
+      acceptEdits: false,
+      modeOverride: "plan",
+    };
   }
 
   if (rawOptions.auto) {
-    return { autoMode: true, planMode: false, acceptEdits: false };
+    return {
+      autoMode: true,
+      planMode: false,
+      acceptEdits: false,
+      modeOverride: "auto",
+    };
   }
 
   if (rawOptions.acceptEdits) {
-    return { autoMode: false, planMode: false, acceptEdits: true };
+    return {
+      autoMode: false,
+      planMode: false,
+      acceptEdits: true,
+      modeOverride: "accept-edits",
+    };
   }
 
   if (defaults.planMode) {
-    return { autoMode: false, planMode: true, acceptEdits: false };
+    return {
+      autoMode: false,
+      planMode: true,
+      acceptEdits: false,
+      modeOverride: null,
+    };
   }
 
   if (defaults.autoMode) {
-    return { autoMode: true, planMode: false, acceptEdits: false };
+    return {
+      autoMode: true,
+      planMode: false,
+      acceptEdits: false,
+      modeOverride: null,
+    };
   }
 
   if (defaults.acceptEdits) {
-    return { autoMode: false, planMode: false, acceptEdits: true };
+    return {
+      autoMode: false,
+      planMode: false,
+      acceptEdits: true,
+      modeOverride: null,
+    };
   }
 
-  return { autoMode: false, planMode: false, acceptEdits: false };
+  return {
+    autoMode: false,
+    planMode: false,
+    acceptEdits: false,
+    modeOverride: null,
+  };
+}
+
+function getEffectiveModes(
+  options: Pick<
+    ChatOptions,
+    "autoMode" | "planMode" | "acceptEdits" | "modeOverride"
+  >,
+  session: Pick<StoredChatSession, "autoMode" | "planMode" | "acceptEdits">,
+): {
+  autoMode: boolean;
+  planMode: boolean;
+  acceptEdits: boolean;
+} {
+  if (options.modeOverride) {
+    return {
+      autoMode: options.autoMode,
+      planMode: options.planMode,
+      acceptEdits: options.acceptEdits,
+    };
+  }
+
+  return {
+    autoMode: session.autoMode ?? options.autoMode,
+    planMode: session.planMode ?? options.planMode,
+    acceptEdits: session.acceptEdits ?? options.acceptEdits,
+  };
+}
+
+function createToolSafetyReviewer(
+  apiKey: string,
+  model: string,
+  baseUrl: string,
+): (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult> {
+  return async (
+    request: ToolApprovalRequest,
+  ): Promise<ToolSafetyReviewResult> => {
+    try {
+      const response = await createResponse({
+        apiKey,
+        model,
+        system:
+          "You are a safety reviewer for CLI tool calls. Respond with a short verdict only. Approve only if the request is narrowly scoped, justified by the provided reason, and appears safe for the local workspace. Reject if the reason is missing, vague, risky, destructive, or unrelated to the requested action. Format: SAFE: <brief reason> or UNSAFE: <brief reason>.",
+        input: [
+          {
+            role: "user",
+            content: [
+              `Tool: ${request.toolName}`,
+              `Title: ${request.title}`,
+              `Reason: ${request.reason}`,
+              `Summary: ${request.summary}`,
+              `Details:\n${request.details.join("\n")}`,
+            ].join("\n"),
+          },
+        ],
+        baseUrl,
+        maxOutputTokens: 120,
+        toolChoice: "none",
+      });
+      const verdict =
+        extractOutputText(response).trim() || "UNSAFE: Empty review response.";
+      const normalizedVerdict = verdict.toUpperCase();
+      return {
+        safe: normalizedVerdict.startsWith("SAFE:"),
+        verdict,
+      };
+    } catch (error) {
+      return {
+        safe: false,
+        verdict:
+          error instanceof Error
+            ? `UNSAFE: Safety review failed: ${error.message}`
+            : `UNSAFE: Safety review failed: ${String(error)}`,
+      };
+    }
+  };
 }
 
 async function promptForToolApproval(

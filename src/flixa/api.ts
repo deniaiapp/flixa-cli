@@ -1,3 +1,11 @@
+import {
+  generateText,
+  jsonSchema,
+  streamText,
+  tool,
+  type ModelMessage,
+} from "ai";
+import { createOpenResponses } from "@ai-sdk/open-responses";
 import { getApiKey } from "../auth/service.ts";
 
 export const DEFAULT_FLIXA_BASE_URL =
@@ -125,6 +133,18 @@ export interface FlixaResponseDisplayParts {
   thinkingText: string;
 }
 
+export interface GeneratedResponseTurn {
+  assistantText: string;
+  thinkingText?: string;
+  toolCalls: Array<{
+    callId: string;
+    name: string;
+    argumentsText: string;
+  }>;
+  responseMessages: ModelMessage[];
+  response: FlixaResponse;
+}
+
 export function resolveFlixaApiKey(): string | null {
   const envApiKey = process.env.FLIXA_API_KEY?.trim();
   if (envApiKey) return envApiKey;
@@ -173,127 +193,179 @@ export async function fetchDeniUsage(options: {
 export async function createResponse(
   options: CreateResponseOptions,
 ): Promise<FlixaResponse> {
-  const response = await fetch(`${resolveBaseUrl(options.baseUrl)}/responses`, {
-    method: "POST",
-    signal: options.signal,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${options.apiKey}`,
-    },
-    body: JSON.stringify(buildRequestBody(options)),
-  });
-
-  if (!response.ok) {
-    throw new Error(await formatApiError(response));
+  if (options.previousResponseId) {
+    throw new Error(
+      "previousResponseId is not supported here. Resend the full conversation instead.",
+    );
   }
 
-  return (await response.json()) as FlixaResponse;
+  const messages = buildModelMessages(options);
+  const result = await generateResponseTurn({
+    apiKey: options.apiKey,
+    model: options.model,
+    messages,
+    system: options.system,
+    baseUrl: options.baseUrl,
+    maxOutputTokens: options.maxOutputTokens,
+    signal: options.signal,
+    tools: options.tools,
+    toolChoice: options.toolChoice,
+  });
+
+  return result.response;
 }
 
 export async function streamResponse(
   options: CreateResponseOptions,
   onText: (delta: string) => void,
 ): Promise<StreamResponseResult> {
-  const response = await fetch(`${resolveBaseUrl(options.baseUrl)}/responses`, {
-    method: "POST",
-    signal: options.signal,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${options.apiKey}`,
-    },
-    body: JSON.stringify(buildRequestBody({ ...options, stream: true })),
+  if (options.previousResponseId) {
+    throw new Error(
+      "previousResponseId is not supported here. Resend the full conversation instead.",
+    );
+  }
+
+  const messages = buildModelMessages(options);
+  const aiTools = buildAiSdkTools(options.tools);
+  const model = createResponsesModel(options);
+  const result = streamText({
+    model,
+    messages,
+    system: options.system,
+    maxOutputTokens: options.maxOutputTokens,
+    abortSignal: options.signal,
+    maxRetries: 0,
+    ...(aiTools
+      ? {
+          tools: aiTools,
+          toolChoice: (options.toolChoice ?? "auto") as "auto" | "none",
+        }
+      : {}),
   });
 
-  if (!response.ok) {
-    throw new Error(await formatApiError(response));
-  }
-
-  if (!response.body) {
-    throw new Error("Streaming response body was empty.");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let text = "";
-  let completedResponse: FlixaResponse | undefined;
+  for await (const delta of result.textStream) {
+    text += delta;
+    onText(delta);
+  }
 
-  const handleEvent = (eventBlock: string): void => {
-    const parsedEvent = parseSseData(eventBlock);
-    if (!parsedEvent || parsedEvent === "[DONE]") {
-      return;
-    }
+  return { text };
+}
 
-    const payload = safeParseJson(parsedEvent);
-    if (!payload || typeof payload !== "object") {
-      return;
-    }
+export async function generateResponseTurn(options: {
+  apiKey: string;
+  model: string;
+  messages: ModelMessage[];
+  system?: string;
+  baseUrl?: string;
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
+  tools?: FunctionToolDefinition[];
+  toolChoice?: "auto" | "none";
+}): Promise<GeneratedResponseTurn> {
+  const aiTools = buildAiSdkTools(options.tools);
+  const result = await generateText({
+    model: createResponsesModel(options),
+    messages: options.messages,
+    system: options.system,
+    maxOutputTokens: options.maxOutputTokens,
+    abortSignal: options.signal,
+    maxRetries: 0,
+    ...(aiTools
+      ? {
+          tools: aiTools,
+          toolChoice: (options.toolChoice ?? "auto") as "auto" | "none",
+        }
+      : {}),
+  });
 
-    const payloadRecord = payload as Record<string, unknown>;
-    const type = payloadRecord["type"];
-
-    if (
-      type === "response.output_text.delta" &&
-      typeof payloadRecord["delta"] === "string"
-    ) {
-      const delta = payloadRecord["delta"];
-      text += delta;
-      onText(delta);
-      return;
-    }
-
-    if (
-      type === "response.output_text.done" &&
-      typeof payloadRecord["text"] === "string" &&
-      !text
-    ) {
-      text = payloadRecord["text"];
-      onText(text);
-      return;
-    }
-
-    if (
-      type === "response.completed" &&
-      isFlixaResponse(payloadRecord["response"])
-    ) {
-      completedResponse = payloadRecord["response"];
-      return;
-    }
-
-    if (type === "error") {
-      const message = extractErrorMessage(payloadRecord);
-      throw new Error(message || "Flixa API request failed.");
-    }
+  return {
+    assistantText: result.text,
+    thinkingText: result.reasoningText ?? undefined,
+    toolCalls: result.toolCalls.map((toolCall) => ({
+      callId: toolCall.toolCallId,
+      name: toolCall.toolName,
+      argumentsText:
+        typeof toolCall.input === "string"
+          ? toolCall.input
+          : JSON.stringify(toolCall.input),
+    })),
+    responseMessages: result.response.messages as ModelMessage[],
+    response: coerceFlixaResponse(
+      result.response.body,
+      result.response.id,
+      result.text,
+      result.reasoningText,
+      result.toolCalls.map((toolCall) => ({
+        callId: toolCall.toolCallId,
+        name: toolCall.toolName,
+        argumentsText:
+          typeof toolCall.input === "string"
+            ? toolCall.input
+            : JSON.stringify(toolCall.input),
+      })),
+    ),
   };
+}
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
+export function createResponsesModel(options: {
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
+}) {
+  return createOpenResponses({
+    name: "flixa",
+    url: `${resolveBaseUrl(options.baseUrl)}/responses`,
+    apiKey: options.apiKey,
+  })(options.model);
+}
 
-    const events = buffer.split(/\r?\n\r?\n/);
-    buffer = events.pop() ?? "";
-
-    for (const eventBlock of events) {
-      handleEvent(eventBlock);
-    }
-
-    if (done) {
-      break;
-    }
+export function buildAiSdkTools(
+  tools?: FunctionToolDefinition[],
+): Record<string, ReturnType<typeof tool>> | undefined {
+  if (!tools || tools.length === 0) {
+    return undefined;
   }
 
-  if (buffer.trim()) {
-    handleEvent(buffer);
-  }
+  return Object.fromEntries(
+    tools.map((toolDefinition) => [
+      toolDefinition.name,
+      tool({
+        description: toolDefinition.description,
+        inputSchema: jsonSchema(toolDefinition.parameters as never),
+      }),
+    ]),
+  );
+}
 
-  if (!text && completedResponse) {
-    text = extractOutputText(completedResponse);
-    if (text) {
-      onText(text);
-    }
-  }
+export function chatHistoryToModelMessages(
+  history: ChatMessage[],
+): ModelMessage[] {
+  return history.map((message) => ({
+    role: message.role,
+    content: message.content,
+  }));
+}
 
-  return { text, response: completedResponse };
+export function createToolResultMessage(
+  results: Array<{
+    callId: string;
+    name: string;
+    output: string;
+  }>,
+): ModelMessage {
+  return {
+    role: "tool",
+    content: results.map((result) => ({
+      type: "tool-result" as const,
+      toolCallId: result.callId,
+      toolName: result.name,
+      output: {
+        type: "text" as const,
+        value: result.output,
+      },
+    })),
+  };
 }
 
 export function extractOutputText(response: FlixaResponse): string {
@@ -328,42 +400,73 @@ export function extractFunctionCalls(
     }));
 }
 
-function buildRequestBody(
-  options: CreateResponseOptions,
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    model: options.model,
-    input: (options.input ?? options.messages?.map(messageToInputItem) ?? []),
-    stream: options.stream ?? false,
-  };
-
-  if (options.system?.trim()) {
-    body["instructions"] = options.system.trim();
+function buildModelMessages(options: CreateResponseOptions): ModelMessage[] {
+  if (options.messages) {
+    return chatHistoryToModelMessages(options.messages);
   }
 
-  if (typeof options.maxOutputTokens === "number") {
-    body["max_output_tokens"] = options.maxOutputTokens;
+  if (!options.input) {
+    throw new Error("No input messages provided.");
   }
 
-  if (options.previousResponseId) {
-    body["previous_response_id"] = options.previousResponseId;
-  }
+  return options.input.map((item) => {
+    if ("type" in item && item.type === "function_call_output") {
+      throw new Error(
+        "function_call_output is not supported here. Resend the full conversation instead.",
+      );
+    }
 
-  if (options.tools && options.tools.length > 0) {
-    body["tools"] = options.tools;
-  }
-
-  if (options.toolChoice) {
-    body["tool_choice"] = options.toolChoice;
-  }
-
-  return body;
+    return {
+      role: item.role,
+      content: item.content,
+    };
+  });
 }
 
-function messageToInputItem(message: ChatMessage): ResponseMessageInputItem {
+function coerceFlixaResponse(
+  value: unknown,
+  id: string | undefined,
+  text: string,
+  thinkingText: string | undefined,
+  toolCalls: Array<{
+    callId: string;
+    name: string;
+    argumentsText: string;
+  }>,
+): FlixaResponse {
+  if (isFlixaResponse(value)) {
+    return value;
+  }
+
+  const output: FlixaResponseOutputItem[] = [];
+
+  if (thinkingText?.trim()) {
+    output.push({
+      type: "reasoning",
+      content: [{ type: "reasoning", text: thinkingText.trim() }],
+    });
+  }
+
+  if (text.trim()) {
+    output.push({
+      type: "message",
+      content: [{ type: "output_text", text: text.trim() }],
+    });
+  }
+
+  for (const toolCall of toolCalls) {
+    output.push({
+      type: "function_call",
+      call_id: toolCall.callId,
+      name: toolCall.name,
+      arguments: toolCall.argumentsText,
+    });
+  }
+
   return {
-    role: message.role,
-    content: message.content,
+    id,
+    output,
+    output_text: text,
   };
 }
 
@@ -402,27 +505,6 @@ function extractErrorMessage(payload: Record<string, unknown>): string | null {
 
   const errorMessage = (error as Record<string, unknown>)["message"];
   return typeof errorMessage === "string" ? errorMessage : null;
-}
-
-function parseSseData(eventBlock: string): string | null {
-  const dataLines = eventBlock
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart());
-
-  if (dataLines.length === 0) {
-    return null;
-  }
-
-  return dataLines.join("\n");
-}
-
-function safeParseJson(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return null;
-  }
 }
 
 function isFlixaResponse(value: unknown): value is FlixaResponse {

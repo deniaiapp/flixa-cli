@@ -1,12 +1,10 @@
 import { cwd } from "node:process";
 import {
-  createResponse,
-  extractFunctionCalls,
-  extractOutputText,
-  extractThinkingText,
+  chatHistoryToModelMessages,
+  createToolResultMessage,
+  generateResponseTurn,
   type ChatMessage,
   type FlixaResponse,
-  type ResponseInputItem,
 } from "../flixa/api.ts";
 import {
   executeToolCall,
@@ -27,7 +25,15 @@ export interface AgentRunOptions {
   acceptEdits?: boolean;
   signal?: AbortSignal;
   requestToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
+  reviewToolSafety?: (
+    request: ToolApprovalRequest,
+  ) => Promise<ToolSafetyReviewResult>;
   onEvent?: (event: AgentRunEvent) => void;
+}
+
+export interface ToolSafetyReviewResult {
+  safe: boolean;
+  verdict: string;
 }
 
 export interface AgentRunResult {
@@ -64,7 +70,7 @@ const DEFAULT_AGENT_SYSTEM_PROMPT = [
   "The current workspace is the user's repository root.",
 ].join(" ");
 
-const MAX_TOOL_ROUNDS = 24;
+const MAX_TOOL_ROUNDS = Infinity;
 
 export async function runAgentTurn(
   options: AgentRunOptions,
@@ -84,42 +90,78 @@ export async function runAgentTurn(
     ...options.history,
     { role: "user" as const, content: options.prompt },
   ];
+  let modelMessages = chatHistoryToModelMessages(baseHistory);
 
-  let response = await createResponse({
-    apiKey: options.apiKey,
-    model: options.model,
-    messages: baseHistory,
-    system: combinedSystemPrompt,
-    baseUrl: options.baseUrl,
-    maxOutputTokens: options.maxOutputTokens,
-    signal: options.signal,
-    tools,
-    toolChoice: "auto",
-  });
   const executedToolResults: ExecutedToolResult[] = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const functionCalls = extractFunctionCalls(response);
+    const response = await generateResponseTurn({
+      apiKey: options.apiKey,
+      model: options.model,
+      messages: modelMessages,
+      system: combinedSystemPrompt,
+      baseUrl: options.baseUrl,
+      maxOutputTokens: options.maxOutputTokens,
+      signal: options.signal,
+      tools,
+      toolChoice: "auto",
+    });
+    const functionCalls = response.toolCalls;
     if (functionCalls.length === 0) {
       const finalText =
-        extractOutputText(response).trim() ||
-        buildFallbackAssistantText(executedToolResults);
-      const thinkingText = extractThinkingText(response);
+        response.assistantText.trim() || buildFallbackAssistantText(executedToolResults);
+      const thinkingText = response.thinkingText?.trim() || undefined;
       options.onEvent?.({ type: "assistant_text", text: finalText });
       return {
         finalText,
         thinkingText,
-        finalResponse: response,
+        finalResponse: response.response,
         history: [...baseHistory, { role: "assistant", content: finalText }],
       };
     }
 
-    const toolOutputs: ResponseInputItem[] = [];
+    const toolOutputs: Array<{
+      callId: string;
+      name: string;
+      output: string;
+    }> = [];
     for (const functionCall of functionCalls) {
       const summary = summarizeToolCall(
         functionCall.name,
         functionCall.argumentsText,
       );
+      const safetyReviewRequest = getToolSafetyReviewRequest(
+        functionCall.name,
+        functionCall.argumentsText,
+        options,
+      );
+      if (safetyReviewRequest) {
+        const safetyReview = await reviewToolSafety(
+          safetyReviewRequest,
+          options.reviewToolSafety,
+        );
+        if (!safetyReview.safe) {
+          const deniedResult = createDeniedToolCallResult(
+            functionCall.name,
+            functionCall.callId,
+            summary,
+            `Blocked by safety review: ${safetyReview.verdict}`,
+          );
+          options.onEvent?.({
+            type: "tool_result",
+            toolName: deniedResult.name,
+            summary: deniedResult.summary,
+            output: deniedResult.output,
+          });
+          toolOutputs.push({
+            callId: deniedResult.callId,
+            name: deniedResult.name,
+            output: deniedResult.output,
+          });
+          continue;
+        }
+      }
+
       const approvalRequest = getToolApprovalRequest(
         functionCall.name,
         functionCall.argumentsText,
@@ -144,8 +186,8 @@ export async function runAgentTurn(
             output: deniedResult.output,
           });
           toolOutputs.push({
-            type: "function_call_output",
-            call_id: deniedResult.callId,
+            callId: deniedResult.callId,
+            name: deniedResult.name,
             output: deniedResult.output,
           });
           continue;
@@ -182,24 +224,17 @@ export async function runAgentTurn(
       });
 
       toolOutputs.push({
-        type: "function_call_output",
-        call_id: result.callId,
+        callId: result.callId,
+        name: result.name,
         output: result.output,
       });
     }
 
-    response = await createResponse({
-      apiKey: options.apiKey,
-      model: options.model,
-      input: toolOutputs,
-      previousResponseId: response.id,
-      system: combinedSystemPrompt,
-      baseUrl: options.baseUrl,
-      maxOutputTokens: options.maxOutputTokens,
-      signal: options.signal,
-      tools,
-      toolChoice: "auto",
-    });
+    modelMessages = [
+      ...modelMessages,
+      ...response.responseMessages,
+      createToolResultMessage(toolOutputs),
+    ];
   }
 
   throw new Error("Tool loop exceeded the maximum number of rounds.");
@@ -250,6 +285,7 @@ function getToolApprovalRequest(
   }
 
   const parsed = safeParseArguments(argumentsText);
+  const toolReason = getStringArgument(parsed, "reason");
   switch (toolName) {
     case "Bash":
       if (options.autoMode) {
@@ -261,6 +297,7 @@ function getToolApprovalRequest(
         reason: "Shell commands require approval in this mode.",
         summary: summarizeToolCall(toolName, argumentsText),
         details: [
+          `model reason: ${previewForDisplay(toolReason)}`,
           `command: ${previewForDisplay(getStringArgument(parsed, "command"))}`,
         ],
       };
@@ -274,6 +311,7 @@ function getToolApprovalRequest(
         reason: "File writes require approval in default mode.",
         summary: summarizeToolCall(toolName, argumentsText),
         details: [
+          `model reason: ${previewForDisplay(toolReason)}`,
           `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
           `bytes: ${String(
             Buffer.byteLength(
@@ -293,6 +331,7 @@ function getToolApprovalRequest(
         reason: "File edits require approval in default mode.",
         summary: summarizeToolCall(toolName, argumentsText),
         details: [
+          `model reason: ${previewForDisplay(toolReason)}`,
           `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
           `replace: ${previewForDisplay(getStringArgument(parsed, "old_string"))}`,
           `with: ${previewForDisplay(getStringArgument(parsed, "new_string"))}`,
@@ -301,6 +340,75 @@ function getToolApprovalRequest(
     default:
       return null;
   }
+}
+
+function getToolSafetyReviewRequest(
+  toolName: string,
+  argumentsText: string,
+  options: Pick<AgentRunOptions, "autoMode" | "planMode">,
+): ToolApprovalRequest | null {
+  if (options.planMode || !options.autoMode) {
+    return null;
+  }
+
+  const parsed = safeParseArguments(argumentsText);
+  const toolReason = getStringArgument(parsed, "reason");
+  switch (toolName) {
+    case "Bash":
+      return {
+        toolName,
+        title: "Review bash command safety",
+        reason: toolReason ?? "",
+        summary: summarizeToolCall(toolName, argumentsText),
+        details: [
+          `command: ${previewForDisplay(getStringArgument(parsed, "command"))}`,
+        ],
+      };
+    case "Write":
+      return {
+        toolName,
+        title: "Review file write safety",
+        reason: toolReason ?? "",
+        summary: summarizeToolCall(toolName, argumentsText),
+        details: [
+          `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
+          `bytes: ${String(
+            Buffer.byteLength(
+              getStringArgument(parsed, "content") ?? "",
+              "utf-8",
+            ),
+          )}`,
+        ],
+      };
+    case "Edit":
+      return {
+        toolName,
+        title: "Review file edit safety",
+        reason: toolReason ?? "",
+        summary: summarizeToolCall(toolName, argumentsText),
+        details: [
+          `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
+          `replace: ${previewForDisplay(getStringArgument(parsed, "old_string"))}`,
+          `with: ${previewForDisplay(getStringArgument(parsed, "new_string"))}`,
+        ],
+      };
+    default:
+      return null;
+  }
+}
+
+async function reviewToolSafety(
+  request: ToolApprovalRequest,
+  reviewer?: AgentRunOptions["reviewToolSafety"],
+): Promise<ToolSafetyReviewResult> {
+  if (!reviewer) {
+    return {
+      safe: false,
+      verdict: "UNSAFE: No safety reviewer configured for auto mode.",
+    };
+  }
+
+  return reviewer(request);
 }
 
 async function requestToolApproval(
@@ -400,6 +508,10 @@ function buildSystemPrompt(options: AgentRunOptions): string {
       "Plan mode is enabled. You may inspect the repository, read files, and analyze code, but you must not make changes or propose that changes were applied. Produce a concrete implementation plan with relevant files, steps, and risks.",
     );
   }
+
+  promptSections.push(
+    "Whenever you call a tool, you must include a non-empty 'reason' argument explaining why the action is needed and why it is safe. Keep the reason specific to the exact action.",
+  );
 
   if (options.system?.trim()) {
     promptSections.push(options.system.trim());

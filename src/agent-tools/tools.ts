@@ -69,8 +69,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
             description:
               "Optional timeout in milliseconds. Defaults to 30000.",
           },
+          reason: {
+            type: "string",
+            description:
+              "Why this command is needed and why it is safe to run.",
+          },
         },
-        required: ["command"],
+        required: ["command", "reason"],
         additionalProperties: false,
       },
     },
@@ -96,8 +101,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
             type: "integer",
             description: "1-based end line to read.",
           },
+          reason: {
+            type: "string",
+            description:
+              "Why this file needs to be read and why the read is safe.",
+          },
         },
-        required: ["file_path"],
+        required: ["file_path", "reason"],
         additionalProperties: false,
       },
     },
@@ -120,8 +130,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
             type: "string",
             description: "Full file contents to write.",
           },
+          reason: {
+            type: "string",
+            description:
+              "Why this write is necessary and why it is safe.",
+          },
         },
-        required: ["file_path", "content"],
+        required: ["file_path", "content", "reason"],
         additionalProperties: false,
       },
     },
@@ -152,8 +167,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
             type: "boolean",
             description: "Replace all occurrences instead of exactly one.",
           },
+          reason: {
+            type: "string",
+            description:
+              "Why this edit is necessary and why it is safe.",
+          },
         },
-        required: ["file_path", "old_string", "new_string"],
+        required: ["file_path", "old_string", "new_string", "reason"],
         additionalProperties: false,
       },
     },
@@ -181,8 +201,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
             type: "string",
             description: "Optional glob filter such as *.ts or src/**/*.tsx.",
           },
+          reason: {
+            type: "string",
+            description:
+              "Why this search is needed and why it is safe.",
+          },
         },
-        required: ["pattern"],
+        required: ["pattern", "reason"],
         additionalProperties: false,
       },
     },
@@ -206,7 +231,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
             type: "string",
             description: "Optional directory path relative to the workspace root.",
           },
+          reason: {
+            type: "string",
+            description:
+              "Why this file listing is needed and why it is safe.",
+          },
         },
+        required: ["reason"],
         additionalProperties: false,
       },
     },
