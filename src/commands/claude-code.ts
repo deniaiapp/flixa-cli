@@ -58,5 +58,10 @@ export function registerClaudeCodeCommand(program: Command): void {
       } else {
         console.log(chalk.dim("No changes made."));
       }
+
+      // ── 次のステップ ──────────────────────────────────────────────────
+      console.log();
+      console.log(chalk.dim("Start Claude Code with:"));
+      console.log(chalk.cyan("  claude"));
     });
 }

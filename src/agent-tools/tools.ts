@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -14,6 +14,7 @@ const DEFAULT_BASH_TIMEOUT_MS = 30_000;
 const MAX_TOOL_OUTPUT_CHARS = 16_000;
 const MAX_READ_CHARS = 24_000;
 const require = createRequire(import.meta.url);
+let cachedWindowsShellExecutable: string | null = null;
 
 export interface ToolCallRequest {
   name: string;
@@ -285,11 +286,25 @@ async function runShellCommand(
     cwd: context.workspaceRoot,
     timeoutMs,
   });
+  const ok = result.exit_code === 0 && !result.timed_out;
 
-  const output = JSON.stringify(result, null, 2);
+  const output = JSON.stringify(
+    {
+      ok,
+      command,
+      ...result,
+    },
+    null,
+    2,
+  );
   return {
     output: truncate(output),
-    summary: `Bash finished with exit code ${result.exit_code}`,
+    summary: formatShellResultSummary(
+      command,
+      result.exit_code,
+      result.timed_out,
+      timeoutMs,
+    ),
   };
 }
 
@@ -597,6 +612,33 @@ function truncate(value: string, maxLength = MAX_TOOL_OUTPUT_CHARS): string {
   return `${value.slice(0, maxLength)}\n...truncated...`;
 }
 
+function formatInlineCommand(command: string, maxLength = 100): string {
+  const singleLine = command.replace(/\s+/g, " ").trim();
+  const shortened =
+    singleLine.length > maxLength
+      ? `${singleLine.slice(0, maxLength)}…`
+      : singleLine;
+  return JSON.stringify(shortened || command);
+}
+
+function formatShellResultSummary(
+  command: string,
+  exitCode: number | null,
+  timedOut: boolean,
+  timeoutMs: number,
+): string {
+  const formattedCommand = formatInlineCommand(command);
+  if (timedOut) {
+    return `Bash ${formattedCommand} timed out after ${timeoutMs}ms`;
+  }
+
+  if (exitCode === 0) {
+    return `Bash ${formattedCommand} finished with exit code 0`;
+  }
+
+  return `Bash ${formattedCommand} failed with exit code ${exitCode}`;
+}
+
 function toPortablePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
@@ -626,7 +668,7 @@ function getShellInvocation(command: string): {
 } {
   if (process.platform === "win32") {
     return {
-      executable: "powershell",
+      executable: getWindowsShellExecutable(),
       executableArgs: ["-NoProfile", "-Command", command],
     };
   }
@@ -635,6 +677,30 @@ function getShellInvocation(command: string): {
     executable: process.env.SHELL || "bash",
     executableArgs: ["-lc", command],
   };
+}
+
+function getWindowsShellExecutable(): string {
+  if (cachedWindowsShellExecutable) {
+    return cachedWindowsShellExecutable;
+  }
+
+  for (const candidate of ["pwsh", "powershell"]) {
+    const result = spawnSync(
+      candidate,
+      ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"],
+      {
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf-8",
+      },
+    );
+    if (result.status === 0) {
+      cachedWindowsShellExecutable = candidate;
+      return candidate;
+    }
+  }
+
+  cachedWindowsShellExecutable = "powershell";
+  return cachedWindowsShellExecutable;
 }
 
 async function runProcess(

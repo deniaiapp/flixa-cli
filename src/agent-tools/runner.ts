@@ -42,6 +42,12 @@ export type AgentRunEvent =
   | { type: "tool_result"; toolName: string; summary: string; output: string }
   | { type: "assistant_text"; text: string };
 
+type ExecutedToolResult = {
+  name: string;
+  summary: string;
+  output: string;
+};
+
 export interface ToolApprovalRequest {
   toolName: "Bash" | "Write" | "Edit";
   title: string;
@@ -90,11 +96,14 @@ export async function runAgentTurn(
     tools,
     toolChoice: "auto",
   });
+  const executedToolResults: ExecutedToolResult[] = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const functionCalls = extractFunctionCalls(response);
     if (functionCalls.length === 0) {
-      const finalText = extractOutputText(response);
+      const finalText =
+        extractOutputText(response).trim() ||
+        buildFallbackAssistantText(executedToolResults);
       const thinkingText = extractThinkingText(response);
       options.onEvent?.({ type: "assistant_text", text: finalText });
       return {
@@ -149,18 +158,25 @@ export async function runAgentTurn(
         summary,
       });
 
-      const result = await executeToolCall(
+      const result = await executeToolCallSafely(
         {
           name: functionCall.name,
           argumentsText: functionCall.argumentsText,
           callId: functionCall.callId,
         },
         context,
+        summary,
+        options.signal,
       );
 
       options.onEvent?.({
         type: "tool_result",
         toolName: result.name,
+        summary: result.summary,
+        output: result.output,
+      });
+      executedToolResults.push({
+        name: result.name,
         summary: result.summary,
         output: result.output,
       });
@@ -326,6 +342,56 @@ function createDeniedToolCallResult(
   };
 }
 
+async function executeToolCallSafely(
+  request: Parameters<typeof executeToolCall>[0],
+  context: ToolExecutionContext,
+  summary: string,
+  signal?: AbortSignal,
+): Promise<Awaited<ReturnType<typeof executeToolCall>>> {
+  try {
+    return await executeToolCall(request, context);
+  } catch (error) {
+    if (signal?.aborted || isAbortError(error)) {
+      throw error;
+    }
+
+    return createFailedToolCallResult(
+      request.name,
+      request.callId,
+      summary,
+      error,
+    );
+  }
+}
+
+function createFailedToolCallResult(
+  toolName: string,
+  callId: string,
+  summary: string,
+  error: unknown,
+): {
+  name: string;
+  callId: string;
+  output: string;
+  summary: string;
+} {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    name: toolName,
+    callId,
+    output: JSON.stringify(
+      {
+        ok: false,
+        tool: toolName,
+        error: message,
+      },
+      null,
+      2,
+    ),
+    summary: `${toolName}${formatToolTarget(summary, toolName)} failed: ${message}`,
+  };
+}
+
 function buildSystemPrompt(options: AgentRunOptions): string {
   const promptSections = [DEFAULT_AGENT_SYSTEM_PROMPT];
 
@@ -373,4 +439,70 @@ function previewForDisplay(value: string | undefined): string {
   }
 
   return shorten(value.replace(/\s+/g, " ").trim(), 120);
+}
+
+function formatToolTarget(summary: string, toolName: string): string {
+  if (!summary || summary === toolName) {
+    return "";
+  }
+
+  return ` ${summary}`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function buildFallbackAssistantText(
+  results: readonly ExecutedToolResult[],
+): string {
+  const lastResult = results[results.length - 1];
+  if (!lastResult) {
+    return "";
+  }
+
+  const payload = safeParseToolOutput(lastResult.output);
+  if (!payload) {
+    return lastResult.summary;
+  }
+
+  if (lastResult.name === "Bash") {
+    const command = getStringArgument(payload, "command");
+    const stderr = getStringArgument(payload, "stderr")?.trim();
+    const timedOut = payload["timed_out"] === true;
+    const exitCode =
+      typeof payload["exit_code"] === "number" ? payload["exit_code"] : null;
+
+    if (timedOut) {
+      return command ? `Command timed out: ${command}` : "Command timed out.";
+    }
+
+    if (exitCode !== null && exitCode !== 0) {
+      if (command && stderr) {
+        return `Command failed: ${command}\n${shorten(stderr, 240)}`;
+      }
+      if (command) {
+        return `Command failed: ${command} (exit code ${exitCode})`;
+      }
+    }
+  }
+
+  const error = getStringArgument(payload, "error")?.trim();
+  if (error) {
+    return `${lastResult.name} failed: ${error}`;
+  }
+
+  return lastResult.summary;
+}
+
+function safeParseToolOutput(output: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }

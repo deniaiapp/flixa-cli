@@ -30,7 +30,7 @@ import {
   loadSessionById,
   saveSession,
 } from "../sessions/store.ts";
-import { setPersistedModel } from "../config/store.ts";
+import { setPersistedModel, setPersistedModeDefaults } from "../config/store.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
 
@@ -383,7 +383,7 @@ function InteractiveChatApp({
           },
         });
 
-        const displayText = result.finalText || "[no text output]";
+        const displayText = result.finalText.trim();
         setMessages((prev) => {
           const nextMessages = [...prev];
           if (result.thinkingText?.trim()) {
@@ -393,11 +393,13 @@ function InteractiveChatApp({
               content: result.thinkingText.trim(),
             });
           }
-          nextMessages.push({
-            id: randomUUID(),
-            role: "assistant",
-            content: displayText,
-          });
+          if (displayText) {
+            nextMessages.push({
+              id: randomUUID(),
+              role: "assistant",
+              content: displayText,
+            });
+          }
           return nextMessages;
         });
         setConversation(result.history);
@@ -413,7 +415,7 @@ function InteractiveChatApp({
         setActiveSession(nextSession);
         setPersistedModel(currentModel);
         saveSession(nextSession);
-        setStatus("Ready");
+        setStatus(displayText ? "Ready" : "No assistant text returned");
       } catch (error) {
         if (abortController.signal.aborted) {
           appendSystemMessage("Request canceled.");
@@ -598,6 +600,7 @@ function InteractiveChatApp({
       setPlanMode(nextModes.planMode);
       setAcceptEdits(nextModes.acceptEdits);
       persistSessionModes(activeSession, nextModes);
+      setPersistedModeDefaults(nextModes);
     },
     [activeSession, persistSessionModes],
   );

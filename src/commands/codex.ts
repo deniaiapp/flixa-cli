@@ -168,6 +168,10 @@ export function registerCodexCommand(program: Command): void {
         console.log(chalk.dim("No changes made."));
       }
 
+      // ── 次のステップ（alias セットアップ前に表示） ─────────────────────
+      console.log();
+      console.log(chalk.dim("Start Codex with Flixa:"));
+
       // ── alias セットアップ ────────────────────────────────────────────
       const { rcFile, aliasLine, applyHint } = detectShellConfig();
 

@@ -256,7 +256,7 @@ async function runSingleTurn(
           },
     });
 
-    assistantText = result.finalText;
+    assistantText = result.finalText.trim();
     rawResponse = result.finalResponse;
     session.history = result.history;
     session.model = options.model;
@@ -275,7 +275,11 @@ async function runSingleTurn(
         console.log(`\n${chalk.dim("thinking")}`);
         console.log(chalk.dim(result.thinkingText.trim()));
       }
-      console.log(`\n${assistantText || chalk.dim("[no text output]")}\n`);
+      if (assistantText) {
+        console.log(`\n${assistantText}\n`);
+      } else {
+        console.log(`\n${chalk.dim("No assistant text returned.")}\n`);
+      }
     }
   } catch (error) {
     if (!options.json) {
