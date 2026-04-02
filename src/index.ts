@@ -6,6 +6,7 @@ import { registerCodexCommand } from "./commands/codex.ts";
 import { registerChatCommand } from "./commands/chat.ts";
 import { registerModelCommand } from "./commands/model.ts";
 import { registerUsageCommand } from "./commands/usage.ts";
+import { registerProvidersCommand } from "./commands/providers.ts";
 import { CLI_VERSION } from "./version.ts";
 
 const program = new Command();
@@ -20,6 +21,7 @@ registerChatCommand(program);
 registerLoginCommand(program);
 registerModelCommand(program);
 registerUsageCommand(program);
+registerProvidersCommand(program);
 registerClaudeCodeCommand(program);
 registerCodexCommand(program);
 

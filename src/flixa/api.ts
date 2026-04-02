@@ -7,6 +7,7 @@ import {
 } from "ai";
 import { createOpenResponses } from "@ai-sdk/open-responses";
 import { getApiKey } from "../auth/service.ts";
+import { getDefaultProvider } from "../config/store.ts";
 
 export const DEFAULT_FLIXA_BASE_URL =
   process.env.FLIXA_BASE_URL?.trim() || "https://api.flixa.engineer/v1/agent";
@@ -152,7 +153,7 @@ export function resolveFlixaApiKey(): string | null {
   const openAiCompatibleApiKey = process.env.OPENAI_API_KEY?.trim();
   if (openAiCompatibleApiKey) return openAiCompatibleApiKey;
 
-  return getApiKey();
+  return getApiKey(getDefaultProvider());
 }
 
 export async function fetchAvailableModels(options: {

@@ -10,6 +10,7 @@ export interface StoredChatSession {
   model: string;
   system?: string;
   autoMode?: boolean;
+  yoloMode?: boolean;
   planMode?: boolean;
   acceptEdits?: boolean;
   createdAt: string;
@@ -25,6 +26,7 @@ export function createSession(
   system?: string,
   modes?: {
     autoMode?: boolean;
+    yoloMode?: boolean;
     planMode?: boolean;
     acceptEdits?: boolean;
   },
@@ -36,6 +38,7 @@ export function createSession(
     model,
     system,
     autoMode: modes?.autoMode ?? false,
+    yoloMode: modes?.yoloMode ?? false,
     planMode: modes?.planMode ?? false,
     acceptEdits: modes?.acceptEdits ?? false,
     createdAt: now,
@@ -75,6 +78,7 @@ export function loadSessionById(sessionId: string): StoredChatSession | null {
       ...parsed,
       cwd: resolve(parsed.cwd),
       autoMode: parsed.autoMode ?? false,
+      yoloMode: parsed.yoloMode ?? false,
       planMode: parsed.planMode ?? false,
       acceptEdits: parsed.acceptEdits ?? false,
       history: Array.isArray(parsed.history) ? parsed.history : [],
@@ -115,18 +119,17 @@ function ensureSessionsDir(): void {
 }
 
 function getSessionPath(session: Pick<StoredChatSession, "id" | "createdAt">): string {
-  const { year, month, day, time } = getSessionPathParts(session.createdAt);
+  const { year, month, dayTime } = getSessionPathParts(session.createdAt);
   const sessionDir = join(SESSIONS_DIR, year, month);
   mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
   ensurePrivateDir(sessionDir);
-  return join(sessionDir, `${day}, ${time}-${session.id}.json`);
+  return join(sessionDir, `${dayTime}-${session.id}.json`);
 }
 
 function getSessionPathParts(timestamp: string): {
   year: string;
   month: string;
-  day: string;
-  time: string;
+  dayTime: string;
 } {
   const date = new Date(timestamp);
   const year = String(date.getFullYear());
@@ -134,9 +137,9 @@ function getSessionPathParts(timestamp: string): {
   const day = String(date.getDate()).padStart(2, "0");
   const time = [date.getHours(), date.getMinutes()]
     .map((value) => String(value).padStart(2, "0"))
-    .join(":");
+    .join("-");
 
-  return { year, month, day, time };
+  return { year, month, dayTime: `${day}-${time}` };
 }
 
 function findSessionPathById(sessionId: string): string | null {
@@ -172,6 +175,7 @@ function loadSessionFromPath(sessionPath: string): StoredChatSession | null {
       ...parsed,
       cwd: resolve(parsed.cwd),
       autoMode: parsed.autoMode ?? false,
+      yoloMode: parsed.yoloMode ?? false,
       planMode: parsed.planMode ?? false,
       acceptEdits: parsed.acceptEdits ?? false,
       history: Array.isArray(parsed.history) ? parsed.history : [],

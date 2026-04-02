@@ -21,6 +21,7 @@ export interface AgentRunOptions {
   baseUrl?: string;
   maxOutputTokens?: number;
   autoMode?: boolean;
+  yoloMode?: boolean;
   planMode?: boolean;
   acceptEdits?: boolean;
   signal?: AbortSignal;
@@ -278,7 +279,7 @@ function summarizeToolCall(toolName: string, argumentsText: string): string {
 function getToolApprovalRequest(
   toolName: string,
   argumentsText: string,
-  options: Pick<AgentRunOptions, "autoMode" | "acceptEdits" | "planMode">,
+  options: Pick<AgentRunOptions, "autoMode" | "yoloMode" | "acceptEdits" | "planMode">,
 ): ToolApprovalRequest | null {
   if (options.planMode) {
     return null;
@@ -288,7 +289,7 @@ function getToolApprovalRequest(
   const toolReason = getStringArgument(parsed, "reason");
   switch (toolName) {
     case "Bash":
-      if (options.autoMode) {
+      if (options.autoMode || options.yoloMode) {
         return null;
       }
       return {
@@ -302,7 +303,7 @@ function getToolApprovalRequest(
         ],
       };
     case "Write":
-      if (options.autoMode || options.acceptEdits) {
+      if (options.autoMode || options.yoloMode || options.acceptEdits) {
         return null;
       }
       return {
@@ -322,7 +323,7 @@ function getToolApprovalRequest(
         ],
       };
     case "Edit":
-      if (options.autoMode || options.acceptEdits) {
+      if (options.autoMode || options.yoloMode || options.acceptEdits) {
         return null;
       }
       return {

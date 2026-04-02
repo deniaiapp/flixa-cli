@@ -8,12 +8,10 @@ import {
   ensurePrivateParent,
   enforcePrivateFile,
 } from "../security/paths.ts";
+import { DEFAULT_PROVIDER, type ProviderId } from "../providers/registry.ts";
 
-const SERVICE = "flixa";
-const ACCOUNT = "api-key";
 const FALLBACK_DIR = FLIXA_HOME_DIR;
-const FALLBACK_FILE = FLIXA_CREDENTIALS_PATH;
-const WIN_DPAPI_FILE = FALLBACK_FILE + ".dpapi";
+const LEGACY_FALLBACK_FILE = FLIXA_CREDENTIALS_PATH;
 
 interface CommandResult {
   status: number | null;
@@ -50,23 +48,41 @@ function escapePsSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+function getServiceName(provider: ProviderId): string {
+  return provider === DEFAULT_PROVIDER ? "flixa" : `flixa:${provider}`;
+}
+
+function getAccountName(): string {
+  return "api-key";
+}
+
+function getFallbackFile(provider: ProviderId): string {
+  return provider === DEFAULT_PROVIDER
+    ? LEGACY_FALLBACK_FILE
+    : join(FALLBACK_DIR, `credentials-${provider}`);
+}
+
+function getWinDpapiFile(provider: ProviderId): string {
+  return `${getFallbackFile(provider)}.dpapi`;
+}
+
 // macOS Keychain
-function macSave(secret: string): void {
+function macSave(service: string, account: string, secret: string): void {
   const result = runCommand("security", [
     "add-generic-password",
-    "-s", SERVICE,
-    "-a", ACCOUNT,
+    "-s", service,
+    "-a", account,
     "-w", secret,
     "-U",
   ]);
-  assertCommandSucceeded("Saving secret to macOS Keychain", result);
+  assertCommandSucceeded(`Saving secret to macOS Keychain for ${service}`, result);
 }
 
-function macLoad(): string | null {
+function macLoad(service: string, account: string): string | null {
   const result = runCommand("security", [
     "find-generic-password",
-    "-s", SERVICE,
-    "-a", ACCOUNT,
+    "-s", service,
+    "-a", account,
     "-w",
   ]);
   if (result.error) return null;
@@ -74,8 +90,8 @@ function macLoad(): string | null {
   return result.stdout.trim() || null;
 }
 
-function macDelete(): void {
-  const result = runCommand("security", ["delete-generic-password", "-s", SERVICE, "-a", ACCOUNT]);
+function macDelete(service: string, account: string): void {
+  const result = runCommand("security", ["delete-generic-password", "-s", service, "-a", account]);
   if (result.error) {
     throw new Error(`Deleting secret from macOS Keychain failed: ${result.error.message}`);
   }
@@ -88,24 +104,24 @@ function macDelete(): void {
 }
 
 // Linux (secret-tool / libsecret)
-function linuxSave(secret: string): void {
+function linuxSave(service: string, account: string, secret: string): void {
   const result = runCommand(
     "secret-tool",
-    ["store", "--label=Flixa API Key", "service", SERVICE, "account", ACCOUNT],
+    ["store", `--label=Flixa API Key (${service})`, "service", service, "account", account],
     { input: secret },
   );
-  assertCommandSucceeded("Saving secret with secret-tool", result);
+  assertCommandSucceeded(`Saving secret with secret-tool for ${service}`, result);
 }
 
-function linuxLoad(): string | null {
-  const result = runCommand("secret-tool", ["lookup", "service", SERVICE, "account", ACCOUNT]);
+function linuxLoad(service: string, account: string): string | null {
+  const result = runCommand("secret-tool", ["lookup", "service", service, "account", account]);
   if (result.error) return null;
   if (result.status !== 0) return null;
   return result.stdout.trim() || null;
 }
 
-function linuxDelete(): void {
-  const result = runCommand("secret-tool", ["clear", "service", SERVICE, "account", ACCOUNT]);
+function linuxDelete(service: string, account: string): void {
+  const result = runCommand("secret-tool", ["clear", "service", service, "account", account]);
   if (result.error) {
     throw new Error(`Deleting secret with secret-tool failed: ${result.error.message}`);
   }
@@ -142,14 +158,14 @@ function runPs1(script: string): CommandResult {
   return result;
 }
 
-function winSave(secret: string): void {
+function winSave(secret: string, provider: ProviderId): void {
   ensurePrivateDir(FALLBACK_DIR);
-  const secretFile = join(FALLBACK_DIR, "_flixa_secret.tmp");
+  const secretFile = join(FALLBACK_DIR, `_flixa_secret_${provider}.tmp`);
   writeFileSync(secretFile, secret, { encoding: "utf-8", mode: 0o600 });
   enforcePrivateFile(secretFile);
 
   const secretFilePath = escapePsSingleQuoted(secretFile.replace(/\\/g, "\\\\"));
-  const outputPath = escapePsSingleQuoted(WIN_DPAPI_FILE.replace(/\\/g, "\\\\"));
+  const outputPath = escapePsSingleQuoted(getWinDpapiFile(provider).replace(/\\/g, "\\\\"));
   const script = `
 Add-Type -AssemblyName System.Security
 $secretPath = '${secretFilePath}'
@@ -168,14 +184,15 @@ try {
 `;
 
   const result = runPs1(script);
-  assertCommandSucceeded("Saving secret with Windows DPAPI", result);
-  enforcePrivateFile(WIN_DPAPI_FILE);
+  assertCommandSucceeded(`Saving secret with Windows DPAPI for ${provider}`, result);
+  enforcePrivateFile(getWinDpapiFile(provider));
 }
 
-function winLoad(): string | null {
-  if (!existsSync(WIN_DPAPI_FILE)) return null;
+function winLoad(provider: ProviderId): string | null {
+  const dpapiFile = getWinDpapiFile(provider);
+  if (!existsSync(dpapiFile)) return null;
 
-  const inputPath = escapePsSingleQuoted(WIN_DPAPI_FILE.replace(/\\/g, "\\\\"));
+  const inputPath = escapePsSingleQuoted(dpapiFile.replace(/\\/g, "\\\\"));
   const script = `
 Add-Type -AssemblyName System.Security
 $inputPath = '${inputPath}'
@@ -190,10 +207,11 @@ $bytes = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $en
   return result.stdout.trim() || null;
 }
 
-function winDelete(): void {
-  if (!existsSync(WIN_DPAPI_FILE)) return;
+function winDelete(provider: ProviderId): void {
+  const dpapiFile = getWinDpapiFile(provider);
+  if (!existsSync(dpapiFile)) return;
   try {
-    unlinkSync(WIN_DPAPI_FILE);
+    unlinkSync(dpapiFile);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Deleting Windows DPAPI secret failed: ${message}`);
@@ -201,21 +219,24 @@ function winDelete(): void {
 }
 
 // File fallback (plaintext with warning — last resort)
-function fileSave(secret: string): void {
-  ensurePrivateParent(FALLBACK_FILE);
-  writeFileSync(FALLBACK_FILE, secret, { encoding: "utf-8", mode: 0o600 });
-  enforcePrivateFile(FALLBACK_FILE);
+function fileSave(secret: string, provider: ProviderId): void {
+  const fallbackFile = getFallbackFile(provider);
+  ensurePrivateParent(fallbackFile);
+  writeFileSync(fallbackFile, secret, { encoding: "utf-8", mode: 0o600 });
+  enforcePrivateFile(fallbackFile);
 }
 
-function fileLoad(): string | null {
-  if (!existsSync(FALLBACK_FILE)) return null;
-  return readFileSync(FALLBACK_FILE, "utf-8").trim() || null;
+function fileLoad(provider: ProviderId): string | null {
+  const fallbackFile = getFallbackFile(provider);
+  if (!existsSync(fallbackFile)) return null;
+  return readFileSync(fallbackFile, "utf-8").trim() || null;
 }
 
-function fileDelete(): void {
-  if (!existsSync(FALLBACK_FILE)) return;
+function fileDelete(provider: ProviderId): void {
+  const fallbackFile = getFallbackFile(provider);
+  if (!existsSync(fallbackFile)) return;
   try {
-    unlinkSync(FALLBACK_FILE);
+    unlinkSync(fallbackFile);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Deleting plaintext credentials failed: ${message}`);
@@ -229,62 +250,71 @@ export interface SaveResult {
   warning?: string;
 }
 
-export function saveSecret(secret: string): SaveResult {
+export function saveSecret(secret: string, provider: ProviderId = DEFAULT_PROVIDER): SaveResult {
+  const service = getServiceName(provider);
+  const account = getAccountName();
+
   if (process.platform === "darwin") {
-    macSave(secret);
+    macSave(service, account, secret);
     return { backend: "keychain" };
   }
 
   if (process.platform === "linux") {
     if (isSecretToolAvailable()) {
-      linuxSave(secret);
+      linuxSave(service, account, secret);
       return { backend: "secret-tool" };
     }
-    fileSave(secret);
+    fileSave(secret, provider);
     return {
       backend: "file",
-      warning: "secret-tool not found. Stored in plaintext at ~/.flixa/credentials with best-effort restricted permissions.",
+      warning: `secret-tool not found. Stored in plaintext at ${getFallbackFile(provider)} with best-effort restricted permissions.`,
     };
   }
 
   if (process.platform === "win32") {
-    winSave(secret);
+    winSave(secret, provider);
     return { backend: "dpapi" };
   }
 
-  fileSave(secret);
+  fileSave(secret, provider);
   return {
     backend: "file",
-    warning: "Unsupported platform. Stored in plaintext at ~/.flixa/credentials with best-effort restricted permissions.",
+    warning: `Unsupported platform. Stored in plaintext at ${getFallbackFile(provider)} with best-effort restricted permissions.`,
   };
 }
 
-export function loadSecret(): string | null {
-  if (process.platform === "darwin") return macLoad();
+export function loadSecret(provider: ProviderId = DEFAULT_PROVIDER): string | null {
+  const service = getServiceName(provider);
+  const account = getAccountName();
+
+  if (process.platform === "darwin") return macLoad(service, account);
   if (process.platform === "linux") {
-    if (isSecretToolAvailable()) return linuxLoad();
-    return fileLoad();
+    if (isSecretToolAvailable()) return linuxLoad(service, account);
+    return fileLoad(provider);
   }
-  if (process.platform === "win32") return winLoad();
-  return fileLoad();
+  if (process.platform === "win32") return winLoad(provider);
+  return fileLoad(provider);
 }
 
-export function deleteSecret(): void {
+export function deleteSecret(provider: ProviderId = DEFAULT_PROVIDER): void {
+  const service = getServiceName(provider);
+  const account = getAccountName();
+
   if (process.platform === "darwin") {
-    macDelete();
+    macDelete(service, account);
     return;
   }
   if (process.platform === "linux") {
     if (isSecretToolAvailable()) {
-      linuxDelete();
+      linuxDelete(service, account);
       return;
     }
-    fileDelete();
+    fileDelete(provider);
     return;
   }
   if (process.platform === "win32") {
-    winDelete();
+    winDelete(provider);
     return;
   }
-  fileDelete();
+  fileDelete(provider);
 }

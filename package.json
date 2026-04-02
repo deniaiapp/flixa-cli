@@ -1,6 +1,6 @@
 {
   "name": "@deniai/flixa",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "private": false,
   "main": "./dist/index.js",
@@ -32,7 +32,10 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.64",
+    "@ai-sdk/google": "^3.0.55",
     "@ai-sdk/open-responses": "^1.0.8",
+    "@ai-sdk/openai": "^3.0.49",
     "@inquirer/prompts": "^8.3.2",
     "@vscode/ripgrep": "^1.15.14",
     "ai": "^6.0.142",

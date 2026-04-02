@@ -5,11 +5,7 @@ import chalk from "chalk";
 
 export function readJson(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+  return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
 }
 
 export function writeJson(path: string, data: Record<string, unknown>): void {

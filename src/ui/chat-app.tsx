@@ -23,6 +23,12 @@ import {
   type ChatMessage,
   type FlixaModelDefinition,
 } from "../flixa/api.ts";
+import {
+  listProviderModelOptions,
+  resolveProviderContext,
+  runSharedAgentTurn,
+  type ProviderModelOption,
+} from "../providers/runtime.ts";
 import { formatUsageReport } from "../flixa/usage.ts";
 import type { StoredChatSession } from "../sessions/store.ts";
 import {
@@ -41,15 +47,17 @@ import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
 
 type InteractiveChatOptions = {
+  provider?: string;
   model: string;
   system?: string;
   stream: boolean;
-  baseUrl: string;
+  baseUrl?: string;
   maxOutputTokens?: number;
   autoMode: boolean;
+  yoloMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
-  modeOverride: "default" | "accept-edits" | "plan" | "auto" | null;
+  modeOverride: "default" | "accept-edits" | "plan" | "auto" | "yolo" | null;
 };
 
 type InteractiveChatAppProps = {
@@ -75,7 +83,7 @@ type SlashCommandSuggestion = SlashCommand & {
   matchedAlias?: string;
 };
 
-type FooterModeKey = "default" | "accept-edits" | "plan" | "auto";
+type FooterModeKey = "default" | "accept-edits" | "plan" | "auto" | "yolo";
 type ApprovalChoice = "approve" | "deny";
 
 const COLORS = {
@@ -87,9 +95,37 @@ const COLORS = {
   dim: "gray",
   success: "greenBright",
   warning: "magentaBright",
+  error: "red",
 } as const;
 
 const LOGO_LINES = [" /\\_/\\\\", "(=^.^=)", '(")_(")'];
+const INIT_PROMPT = `Set up a minimal AGENTS.md for this repo. AGENTS.md is loaded into coding-agent sessions, so it must be concise — only include what an agent would get wrong without it.
+
+Please analyze the codebase and either create or improve AGENTS.md.
+
+Goals:
+- If AGENTS.md does not exist, write one at the project root.
+- If AGENTS.md already exists, review it and propose or apply focused improvements instead of replacing good repo-specific guidance.
+- Keep it concise and specific to this repository.
+
+What to include when applicable:
+1. Commands agents will commonly need: build, lint, test, dev, and any single-test or targeted verification commands that are non-obvious.
+2. High-level architecture and structure that requires reading multiple files to understand.
+3. Important workflow notes, setup quirks, environment details, conventions, and gotchas that would help an agent avoid mistakes.
+4. Important project-specific guidance from existing instruction files such as README.md, CLAUDE.md, AGENTS.md, .cursor/rules, .cursorrules, .github/copilot-instructions.md, .windsurfrules, .clinerules, or .mcp.json.
+
+What to avoid:
+- Generic software advice.
+- Obvious file listings or conventions the agent can infer from the codebase.
+- Made-up sections or filler.
+- Repeating the same guidance in multiple sections.
+
+Prefix the file with exactly:
+# AGENTS.md
+
+This file provides guidance to coding agents when working with this repository.
+`;
+
 const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "/help", description: "show available commands" },
   {
@@ -99,6 +135,7 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   { name: "/continue", description: "load latest session for this directory" },
   { name: "/resume", description: "resume a session by id or recent" },
+  { name: "/init", description: "create or improve AGENTS.md for this repo" },
   { name: "/model", description: "switch model or open selector" },
   { name: "/usage", description: "show plan and quota usage" },
   { name: "/exit", description: "exit flixa cli", aliases: ["/quit"] },
@@ -150,15 +187,10 @@ function InteractiveChatApp({
     () => getInitialModes(options, session),
     [options, session],
   );
-  const [autoMode, setAutoMode] = useState(
-    initialModes.autoMode,
-  );
-  const [planMode, setPlanMode] = useState(
-    initialModes.planMode,
-  );
-  const [acceptEdits, setAcceptEdits] = useState(
-    initialModes.acceptEdits,
-  );
+  const [autoMode, setAutoMode] = useState(initialModes.autoMode);
+  const [yoloMode, setYoloMode] = useState(initialModes.yoloMode);
+  const [planMode, setPlanMode] = useState(initialModes.planMode);
+  const [acceptEdits, setAcceptEdits] = useState(initialModes.acceptEdits);
   const [selectedCommandSuggestionIndex, setSelectedCommandSuggestionIndex] =
     useState(0);
   const [resumeSelectorSessions, setResumeSelectorSessions] = useState<
@@ -167,7 +199,7 @@ function InteractiveChatApp({
   const [selectedResumeSessionIndex, setSelectedResumeSessionIndex] =
     useState(0);
   const [modelSelectorModels, setModelSelectorModels] = useState<
-    FlixaModelDefinition[]
+    Array<FlixaModelDefinition | ProviderModelOption>
   >([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [thinkingStatus, setThinkingStatus] = useState<
@@ -195,13 +227,12 @@ function InteractiveChatApp({
     !isModelSelectorOpen;
   const shouldShowFooter = !isAutocompleteOpen;
   const activeFooterMode = useMemo(
-    () => getActiveFooterMode(autoMode, planMode, acceptEdits),
-    [acceptEdits, autoMode, planMode],
+    () => getActiveFooterMode(autoMode, yoloMode, planMode, acceptEdits),
+    [acceptEdits, autoMode, yoloMode, planMode],
   );
   const activeFooterModeLabel = activeFooterMode
     ? getFooterModeLabel(activeFooterMode)
     : null;
-  const footerPermissionLabel = getFooterPermissionLabel(activeFooterMode);
   const selectedCommandSuggestion =
     commandSuggestions[selectedCommandSuggestionIndex] ??
     commandSuggestions[0] ??
@@ -285,6 +316,7 @@ function InteractiveChatApp({
 
     const nextSession = createSession(cwdValue, currentModel, options.system, {
       autoMode,
+      yoloMode,
       planMode,
       acceptEdits,
     });
@@ -304,6 +336,7 @@ function InteractiveChatApp({
   }, [
     acceptEdits,
     autoMode,
+    yoloMode,
     currentModel,
     currentModelLabel,
     cwdValue,
@@ -316,6 +349,7 @@ function InteractiveChatApp({
       nextSession: StoredChatSession,
       nextModes: {
         autoMode: boolean;
+        yoloMode: boolean;
         planMode: boolean;
         acceptEdits: boolean;
       },
@@ -323,6 +357,7 @@ function InteractiveChatApp({
       const updatedSession = {
         ...nextSession,
         autoMode: nextModes.autoMode,
+        yoloMode: nextModes.yoloMode,
         planMode: nextModes.planMode,
         acceptEdits: nextModes.acceptEdits,
       };
@@ -335,29 +370,53 @@ function InteractiveChatApp({
 
   const reviewToolSafety = useCallback(
     async (request: ToolApprovalRequest): Promise<ToolSafetyReviewResult> => {
+      const providerContext = resolveProviderContext({
+        provider: options.provider,
+        model: currentModel,
+        baseUrl: options.baseUrl,
+      });
+      const reviewPrompt = [
+        `Tool: ${request.toolName}`,
+        `Title: ${request.title}`,
+        `Reason: ${request.reason}`,
+        `Summary: ${request.summary}`,
+        `Details:\n${request.details.join("\n")}`,
+      ].join("\n");
+
       try {
-        const response = await createResponse({
-          apiKey,
-          model: currentModel,
+        if (providerContext.provider === "flixa") {
+          const response = await createResponse({
+            apiKey,
+            model: currentModel,
+            system:
+              "You are a safety reviewer for CLI tool calls. Respond with a short verdict only. Approve only if the request is narrowly scoped, justified by the provided reason, and appears safe for the local workspace. Reject if the reason is missing, vague, risky, destructive, or unrelated to the requested action. Format: SAFE: <brief reason> or UNSAFE: <brief reason>.",
+            input: [{ role: "user", content: reviewPrompt }],
+            baseUrl: options.baseUrl,
+            maxOutputTokens: 120,
+            toolChoice: "none",
+          });
+          const verdict =
+            extractOutputText(response).trim() ||
+            "UNSAFE: Empty review response.";
+          const normalizedVerdict = verdict.toUpperCase();
+          return {
+            safe: normalizedVerdict.startsWith("SAFE:"),
+            verdict,
+          };
+        }
+
+        const result = await runSharedAgentTurn({
+          provider: providerContext.provider,
+          model: providerContext.model,
+          baseUrl: providerContext.baseUrl,
+          history: [],
+          prompt: reviewPrompt,
           system:
             "You are a safety reviewer for CLI tool calls. Respond with a short verdict only. Approve only if the request is narrowly scoped, justified by the provided reason, and appears safe for the local workspace. Reject if the reason is missing, vague, risky, destructive, or unrelated to the requested action. Format: SAFE: <brief reason> or UNSAFE: <brief reason>.",
-          input: [
-            {
-              role: "user",
-              content: [
-                `Tool: ${request.toolName}`,
-                `Title: ${request.title}`,
-                `Reason: ${request.reason}`,
-                `Summary: ${request.summary}`,
-                `Details:\n${request.details.join("\n")}`,
-              ].join("\n"),
-            },
-          ],
-          baseUrl: options.baseUrl,
           maxOutputTokens: 120,
-          toolChoice: "none",
+          planMode: true,
         });
-        const verdict = extractOutputText(response).trim() || "UNSAFE: Empty review response.";
+        const verdict = result.text.trim() || "UNSAFE: Empty review response.";
         const normalizedVerdict = verdict.toUpperCase();
         return {
           safe: normalizedVerdict.startsWith("SAFE:"),
@@ -373,7 +432,7 @@ function InteractiveChatApp({
         };
       }
     },
-    [apiKey, currentModel, options.baseUrl],
+    [apiKey, currentModel, options.baseUrl, options.provider],
   );
 
   const sendPrompt = useCallback(
@@ -398,91 +457,149 @@ function InteractiveChatApp({
       abortRef.current = abortController;
 
       try {
-        const result = await runAgentTurn({
-          apiKey,
+        const providerContext = resolveProviderContext({
+          provider: options.provider,
           model: currentModel,
-          history: conversation,
-          prompt: trimmedPrompt,
-          system: options.system,
           baseUrl: options.baseUrl,
-          maxOutputTokens: options.maxOutputTokens,
-          autoMode,
-          planMode,
-          acceptEdits,
-          signal: abortController.signal,
-          reviewToolSafety,
-          requestToolApproval: (request) => {
-            setPendingApproval(request);
-            setApprovalChoice("approve");
-            setStatus(`Approval required: ${request.toolName}`);
+        });
 
-            return new Promise<boolean>((resolve, reject) => {
-              approvalResolveRef.current = resolve;
-              approvalRejectRef.current = reject;
+        if (providerContext.provider === "flixa") {
+          const result = await runAgentTurn({
+            apiKey,
+            model: currentModel,
+            history: conversation,
+            prompt: trimmedPrompt,
+            system: options.system,
+            baseUrl: options.baseUrl,
+            maxOutputTokens: options.maxOutputTokens,
+            autoMode,
+            yoloMode,
+            planMode,
+            acceptEdits,
+            signal: abortController.signal,
+            reviewToolSafety: yoloMode ? undefined : reviewToolSafety,
+            requestToolApproval: yoloMode
+              ? async () => true
+              : (request) => {
+                  setPendingApproval(request);
+                  setApprovalChoice("approve");
+                  setStatus(`Approval required: ${request.toolName}`);
 
-              const handleAbort = (): void => {
-                settleApprovalRequest({
-                  error: createAbortError(),
-                  nextStatus: "Request canceled",
-                });
-              };
+                  return new Promise<boolean>((resolve, reject) => {
+                    approvalResolveRef.current = resolve;
+                    approvalRejectRef.current = reject;
 
-              abortController.signal.addEventListener("abort", handleAbort, {
-                once: true,
+                    const handleAbort = (): void => {
+                      settleApprovalRequest({
+                        error: createAbortError(),
+                        nextStatus: "Request canceled",
+                      });
+                    };
+
+                    abortController.signal.addEventListener(
+                      "abort",
+                      handleAbort,
+                      {
+                        once: true,
+                      },
+                    );
+                    approvalCleanupRef.current = () => {
+                      abortController.signal.removeEventListener(
+                        "abort",
+                        handleAbort,
+                      );
+                    };
+                  });
+                },
+            onEvent: (event) => {
+              if (event.type === "tool_start") {
+                setStatus(`Running ${event.toolName}…`);
+                return;
+              }
+
+              if (event.type === "tool_result") {
+                appendSystemMessage(event.summary);
+              }
+            },
+          });
+
+          const displayText = result.finalText.trim();
+          setMessages((prev) => {
+            const nextMessages = [...prev];
+            if (result.thinkingText?.trim()) {
+              nextMessages.push({
+                id: randomUUID(),
+                role: "thinking",
+                content: result.thinkingText.trim(),
               });
-              approvalCleanupRef.current = () => {
-                abortController.signal.removeEventListener(
-                  "abort",
-                  handleAbort,
-                );
-              };
-            });
-          },
-          onEvent: (event) => {
-            if (event.type === "tool_start") {
-              setStatus(`Running ${event.toolName}…`);
-              return;
             }
-
-            if (event.type === "tool_result") {
-              appendSystemMessage(event.summary);
+            if (displayText) {
+              nextMessages.push({
+                id: randomUUID(),
+                role: "assistant",
+                content: displayText,
+              });
             }
-          },
-        });
+            return nextMessages;
+          });
+          setConversation(result.history);
+          const nextSession = {
+            ...activeSession,
+            history: result.history,
+            model: currentModel,
+            system: options.system,
+            autoMode,
+            yoloMode,
+            planMode,
+            acceptEdits,
+          };
+          setActiveSession(nextSession);
+          setPersistedModel(currentModel, providerContext.provider);
+          saveSession(nextSession);
+          setStatus(displayText ? "Ready" : "No assistant text returned");
+        } else {
+          const result = await runSharedAgentTurn({
+            provider: providerContext.provider,
+            model: providerContext.model,
+            baseUrl: providerContext.baseUrl,
+            history: conversation,
+            prompt: trimmedPrompt,
+            system: options.system,
+            maxOutputTokens: options.maxOutputTokens,
+            signal: abortController.signal,
+            autoMode,
+            planMode,
+          });
 
-        const displayText = result.finalText.trim();
-        setMessages((prev) => {
-          const nextMessages = [...prev];
-          if (result.thinkingText?.trim()) {
-            nextMessages.push({
-              id: randomUUID(),
-              role: "thinking",
-              content: result.thinkingText.trim(),
-            });
-          }
+          const displayText = result.text.trim();
           if (displayText) {
-            nextMessages.push({
-              id: randomUUID(),
-              role: "assistant",
-              content: displayText,
-            });
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: randomUUID(),
+                role: "assistant",
+                content: displayText,
+              },
+            ]);
           }
-          return nextMessages;
-        });
-        setConversation(result.history);
-        const nextSession = {
-          ...activeSession,
-          history: result.history,
-          model: currentModel,
-          system: options.system,
-          autoMode,
-          planMode,
-          acceptEdits,
-        };
-        setActiveSession(nextSession);
-        setPersistedModel(currentModel);
-        saveSession(nextSession);
-        setStatus(displayText ? "Ready" : "No assistant text returned");
+          setConversation(result.history);
+          const nextSession = {
+            ...activeSession,
+            history: result.history,
+            model: result.context.model,
+            system: options.system,
+            autoMode,
+            yoloMode,
+            planMode,
+            acceptEdits,
+          };
+          setActiveSession(nextSession);
+          setCurrentModel(result.context.model);
+          setCurrentModelLabel(result.context.model);
+          setPersistedModel(result.context.model, result.context.provider);
+          saveSession(nextSession);
+          setStatus(displayText ? "Ready" : "No assistant text returned");
+        }
       } catch (error) {
         if (abortController.signal.aborted) {
           appendSystemMessage("Request canceled.");
@@ -524,9 +641,13 @@ function InteractiveChatApp({
       setActiveSession(nextSession);
       setCurrentModel(nextModel);
       setCurrentModelLabel(nextModel);
-      setPersistedModel(nextModel);
+      setPersistedModel(
+        nextModel,
+        resolveProviderContext({ provider: options.provider }).provider,
+      );
       setConversation(nextSession.history);
       setAutoMode(nextSession.autoMode ?? options.autoMode);
+      setYoloMode(nextSession.yoloMode ?? options.yoloMode);
       setPlanMode(nextSession.planMode ?? options.planMode);
       setAcceptEdits(nextSession.acceptEdits ?? options.acceptEdits);
       setMessages((prev) => [
@@ -549,6 +670,7 @@ function InteractiveChatApp({
       currentModelLabel,
       options.acceptEdits,
       options.autoMode,
+      options.yoloMode,
       options.model,
       options.planMode,
     ],
@@ -585,11 +707,15 @@ function InteractiveChatApp({
     (nextModel: string, label?: string) => {
       setCurrentModel(nextModel);
       setCurrentModelLabel(label ?? nextModel);
-      setPersistedModel(nextModel);
+      setPersistedModel(
+        nextModel,
+        resolveProviderContext({ provider: options.provider }).provider,
+      );
       const nextSession = {
         ...activeSession,
         model: nextModel,
         autoMode,
+        yoloMode,
         planMode,
         acceptEdits,
       };
@@ -602,7 +728,14 @@ function InteractiveChatApp({
       );
       setStatus(`Model: ${label ?? nextModel}`);
     },
-    [acceptEdits, activeSession, appendSystemMessage, autoMode, planMode],
+    [
+      acceptEdits,
+      activeSession,
+      appendSystemMessage,
+      autoMode,
+      yoloMode,
+      planMode,
+    ],
   );
 
   useEffect(() => {
@@ -610,26 +743,46 @@ function InteractiveChatApp({
 
     const syncCurrentModelLabel = async (): Promise<void> => {
       try {
-        const models = await fetchAvailableModels({
-          apiKey,
+        const providerContext = resolveProviderContext({
+          provider: options.provider,
+          model: currentModel,
           baseUrl: options.baseUrl,
+        });
+
+        if (providerContext.provider === "flixa") {
+          const models = await fetchAvailableModels({
+            apiKey,
+            baseUrl: options.baseUrl,
+          });
+          if (canceled) {
+            return;
+          }
+
+          const matchedModel =
+            models.find((model) => model.id === currentModel) ??
+            models.find(
+              (model) =>
+                stripModelProvider(model.id) ===
+                stripModelProvider(currentModel),
+            );
+
+          setCurrentModelLabel(
+            matchedModel ? matchedModel.label : currentModel,
+          );
+          return;
+        }
+
+        const models = await listProviderModelOptions({
+          provider: providerContext.provider,
+          model: currentModel,
+          baseUrl: providerContext.baseUrl,
         });
         if (canceled) {
           return;
         }
 
-        const matchedModel =
-          models.find((model) => model.id === currentModel) ??
-          models.find(
-            (model) =>
-              stripModelProvider(model.id) === stripModelProvider(currentModel),
-          );
-
-        if (matchedModel) {
-          setCurrentModelLabel(matchedModel.label);
-        } else {
-          setCurrentModelLabel(currentModel);
-        }
+        const matchedModel = models.find((model) => model.id === currentModel);
+        setCurrentModelLabel(matchedModel?.label ?? currentModel);
       } catch {
         if (!canceled) {
           setCurrentModelLabel(currentModel);
@@ -642,7 +795,7 @@ function InteractiveChatApp({
     return () => {
       canceled = true;
     };
-  }, [apiKey, currentModel, options.baseUrl]);
+  }, [apiKey, currentModel, options.baseUrl, options.provider]);
 
   const openModelSelector = useCallback(async () => {
     if (loading) {
@@ -654,10 +807,24 @@ function InteractiveChatApp({
     setStatus("Loading models…");
 
     try {
-      const models = await fetchAvailableModels({
-        apiKey,
+      const providerContext = resolveProviderContext({
+        provider: options.provider,
+        model: currentModel,
         baseUrl: options.baseUrl,
       });
+
+      const models =
+        providerContext.provider === "flixa"
+          ? await fetchAvailableModels({
+              apiKey,
+              baseUrl: options.baseUrl,
+            })
+          : await listProviderModelOptions({
+              provider: providerContext.provider,
+              model: currentModel,
+              baseUrl: providerContext.baseUrl,
+            });
+
       if (models.length === 0) {
         appendSystemMessage("No models available for this account.");
         setStatus("No models available");
@@ -672,7 +839,14 @@ function InteractiveChatApp({
       appendSystemMessage(`Failed to load models: ${message}`);
       setStatus("Model selector failed");
     }
-  }, [apiKey, appendSystemMessage, currentModel, loading, options.baseUrl]);
+  }, [
+    apiKey,
+    appendSystemMessage,
+    currentModel,
+    loading,
+    options.baseUrl,
+    options.provider,
+  ]);
 
   const showUsage = useCallback(async () => {
     if (loading) {
@@ -684,6 +858,19 @@ function InteractiveChatApp({
     setStatus("Loading usage…");
 
     try {
+      const providerContext = resolveProviderContext({
+        provider: options.provider,
+        model: currentModel,
+        baseUrl: options.baseUrl,
+      });
+      if (providerContext.provider !== "flixa") {
+        appendSystemMessage(
+          `Usage reporting is not yet implemented for ${providerContext.displayName}.`,
+        );
+        setStatus("Usage unavailable");
+        return;
+      }
+
       const usage = await fetchDeniUsage({
         apiKey,
         baseUrl: options.baseUrl,
@@ -695,12 +882,20 @@ function InteractiveChatApp({
       appendSystemMessage(`Failed to load usage: ${message}`);
       setStatus("Usage request failed");
     }
-  }, [apiKey, appendSystemMessage, loading, options.baseUrl]);
+  }, [
+    apiKey,
+    appendSystemMessage,
+    currentModel,
+    loading,
+    options.baseUrl,
+    options.provider,
+  ]);
 
   const applyFooterMode = useCallback(
     (modeKey: FooterModeKey | null) => {
       const nextModes = getModeFlags(modeKey);
       setAutoMode(nextModes.autoMode);
+      setYoloMode(nextModes.yoloMode);
       setPlanMode(nextModes.planMode);
       setAcceptEdits(nextModes.acceptEdits);
       persistSessionModes(activeSession, nextModes);
@@ -763,6 +958,11 @@ function InteractiveChatApp({
 
       if (trimmed === "/usage") {
         await showUsage();
+        return;
+      }
+
+      if (trimmed === "/init") {
+        await sendPrompt(INIT_PROMPT);
         return;
       }
 
@@ -1313,7 +1513,7 @@ function ModelSelector({
   models,
   selectedIndex,
 }: {
-  models: readonly FlixaModelDefinition[];
+  models: readonly Array<FlixaModelDefinition | ProviderModelOption>;
   selectedIndex: number;
 }): React.JSX.Element {
   const visibleStartIndex = Math.max(
@@ -1336,7 +1536,12 @@ function ModelSelector({
       {visibleModels.map((model, index) => {
         const absoluteIndex = visibleStartIndex + index;
         const isSelected = absoluteIndex === selectedIndex;
-        const meta = [model.id, model.tier, ...model.tags]
+        const isFlixaModel = "tier" in model;
+        const meta = [
+          model.id,
+          isFlixaModel ? model.tier : null,
+          ...("tags" in model && Array.isArray(model.tags) ? model.tags : []),
+        ]
           .filter(Boolean)
           .join(" · ");
         const secondaryLine = model.description || meta;
@@ -1347,15 +1552,19 @@ function ModelSelector({
               {isSelected ? "> " : "  "}
               {model.label}
             </Text>
-            <Text
-              color={isSelected ? COLORS.system : COLORS.dim}
-              wrap="truncate"
-            >
-              {`  ${truncateEnd(secondaryLine, 84)}`}
-            </Text>
-            <Text color={COLORS.dim} wrap="truncate">
-              {`  ${truncateEnd(meta, 84)}`}
-            </Text>
+            {isFlixaModel && secondaryLine ? (
+              <Text
+                color={isSelected ? COLORS.system : COLORS.dim}
+                wrap="truncate"
+              >
+                {`  ${truncateEnd(secondaryLine, 84)}`}
+              </Text>
+            ) : null}
+            {isFlixaModel && meta ? (
+              <Text color={COLORS.dim} wrap="truncate">
+                {`  ${truncateEnd(meta, 84)}`}
+              </Text>
+            ) : null}
           </Box>
         );
       })}
@@ -1660,9 +1869,14 @@ function renderSystemLine(line: string, index: number): React.JSX.Element {
 
 function getActiveFooterMode(
   autoMode: boolean,
+  yoloMode: boolean,
   planMode: boolean,
   acceptEdits: boolean,
 ): FooterModeKey {
+  if (yoloMode) {
+    return "yolo";
+  }
+
   if (autoMode) {
     return "auto";
   }
@@ -1688,6 +1902,8 @@ function getFooterModeLabel(mode: FooterModeKey): string | null {
       return "plan mode on";
     case "auto":
       return "auto mode on";
+    case "yolo":
+      return "yolo mode on";
   }
 }
 
@@ -1695,6 +1911,8 @@ function getFooterModeColor(
   mode: FooterModeKey,
 ): (typeof COLORS)[keyof typeof COLORS] {
   switch (mode) {
+    case "yolo":
+      return COLORS.error;
     case "auto":
       return COLORS.brand;
     case "plan":
@@ -1706,26 +1924,15 @@ function getFooterModeColor(
   }
 }
 
-function getFooterPermissionLabel(mode: FooterModeKey): string {
-  switch (mode) {
-    case "default":
-      return "permissions (approve)";
-    case "accept-edits":
-      return "permissions (accept edits)";
-    case "plan":
-      return "permissions (plan)";
-    case "auto":
-      return "permissions (auto)";
-  }
-}
-
 function getModeFlags(mode: FooterModeKey | null): {
   autoMode: boolean;
+  yoloMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
 } {
   return {
     autoMode: mode === "auto",
+    yoloMode: mode === "yolo",
     planMode: mode === "plan",
     acceptEdits: mode === "accept-edits",
   };
@@ -1734,17 +1941,22 @@ function getModeFlags(mode: FooterModeKey | null): {
 function getInitialModes(
   options: Pick<
     InteractiveChatOptions,
-    "autoMode" | "planMode" | "acceptEdits" | "modeOverride"
+    "autoMode" | "yoloMode" | "planMode" | "acceptEdits" | "modeOverride"
   >,
-  session: Pick<StoredChatSession, "autoMode" | "planMode" | "acceptEdits">,
+  session: Pick<
+    StoredChatSession,
+    "autoMode" | "yoloMode" | "planMode" | "acceptEdits"
+  >,
 ): {
   autoMode: boolean;
+  yoloMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
 } {
   if (options.modeOverride) {
     return {
       autoMode: options.autoMode,
+      yoloMode: options.yoloMode,
       planMode: options.planMode,
       acceptEdits: options.acceptEdits,
     };
@@ -1752,6 +1964,7 @@ function getInitialModes(
 
   return {
     autoMode: session.autoMode ?? options.autoMode,
+    yoloMode: session.yoloMode ?? options.yoloMode,
     planMode: session.planMode ?? options.planMode,
     acceptEdits: session.acceptEdits ?? options.acceptEdits,
   };
@@ -1766,6 +1979,8 @@ function getNextFooterMode(currentMode: FooterModeKey | null): FooterModeKey {
     case "plan":
       return "auto";
     case "auto":
+      return "yolo";
+    case "yolo":
       return "default";
     default:
       return "default";
@@ -1773,7 +1988,7 @@ function getNextFooterMode(currentMode: FooterModeKey | null): FooterModeKey {
 }
 
 function findModelSelectionIndex(
-  models: readonly FlixaModelDefinition[],
+  models: readonly Array<FlixaModelDefinition | ProviderModelOption>,
   currentModel: string,
 ): number {
   const exactIndex = models.findIndex((model) => model.id === currentModel);
@@ -1807,7 +2022,7 @@ function buildHelpMessage(): string {
     "  / for commands",
     "  Tab completes the selected command",
     "  ↑↓ navigates command suggestions or resume sessions",
-    "  Shift+Tab cycles modes: default -> accept edits -> plan -> auto",
+    "  Shift+Tab cycles modes: default -> accept edits -> plan -> auto -> yolo",
     "  Esc clears input or denies the current approval dialog",
     "  Ctrl+C cancels an active request or exits when idle",
     "  Ctrl+L clears the current conversation",
@@ -1817,6 +2032,7 @@ function buildHelpMessage(): string {
     "  /clear, /new          start a fresh conversation",
     "  /continue             load the latest session for this directory",
     "  /resume [sessionId]   resume a saved session",
+    "  /init                 create or improve AGENTS.md for this repo",
     "  /model [id]           open model selector or switch model",
     "  /usage                show plan and quota usage",
     "  /exit, /quit          exit Flixa CLI",

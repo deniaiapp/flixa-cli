@@ -3,14 +3,16 @@ import { select } from "@inquirer/prompts";
 import { cwd } from "node:process";
 import type { Command } from "commander";
 import {
-  DEFAULT_FLIXA_BASE_URL,
   DEFAULT_FLIXA_MODEL,
   createResponse,
   extractOutputText,
-  resolveFlixaApiKey,
   type ChatMessage,
   type FlixaResponse,
 } from "../flixa/api.ts";
+import {
+  resolveProviderContext,
+  runSharedAgentTurn,
+} from "../providers/runtime.ts";
 import {
   runAgentTurn,
   type ToolApprovalRequest,
@@ -34,6 +36,7 @@ import {
 } from "../sessions/store.ts";
 
 type RawChatOptions = {
+  provider?: string;
   model?: string;
   system?: string;
   stream?: boolean;
@@ -43,29 +46,38 @@ type RawChatOptions = {
   continue?: boolean;
   resume?: string | boolean;
   auto?: boolean;
+  yoloMode?: boolean;
   plan?: boolean;
   acceptEdits?: boolean;
   yolo?: boolean;
 };
 
 type ChatOptions = {
+  provider?: string;
   model: string;
   system?: string;
   rawSystem?: string;
   stream: boolean;
   json: boolean;
-  baseUrl: string;
+  baseUrl?: string;
   maxOutputTokens?: number;
   continue: boolean;
   resume?: string | boolean;
   autoMode: boolean;
+  yoloMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
   modeOverride: FooterModeOverride;
   yolo: boolean;
 };
 
-type FooterModeOverride = "default" | "accept-edits" | "plan" | "auto" | null;
+type FooterModeOverride =
+  | "default"
+  | "accept-edits"
+  | "plan"
+  | "auto"
+  | "yolo"
+  | null;
 
 export function registerChatCommand(program: Command): void {
   applyChatOptions(program);
@@ -109,14 +121,15 @@ export function registerChatCommand(program: Command): void {
 }
 
 function applyChatOptions(command: Command): void {
-  const defaultModel = getPersistedModel() || DEFAULT_FLIXA_MODEL;
+  const resolvedDefaults = resolveProviderContext();
+  const defaultModel = resolvedDefaults.model || getPersistedModel() || DEFAULT_FLIXA_MODEL;
   command
+    .option("-p, --provider <provider>", "Provider to use (defaults to configured provider)")
     .option("-m, --model <model>", "Model to use", defaultModel)
     .option("-s, --system <prompt>", "System prompt")
     .option(
       "--base-url <url>",
-      "Override the Flixa API base URL",
-      DEFAULT_FLIXA_BASE_URL,
+      "Override the API base URL for providers that support it",
     )
     .option("--json", "Print the raw JSON response")
     .option("--no-stream", "Disable streaming output")
@@ -130,6 +143,7 @@ function applyChatOptions(command: Command): void {
       "Resume a conversation by session id or pick from recent",
     )
     .option("--auto", "Start in auto mode")
+    .option("--yolo-mode", "Start in yolo mode")
     .option("--plan", "Start in plan mode")
     .option("--accept-edits", "Start in accept edits mode")
     .option("--yolo", "Always allow approvals for one-shot runs");
@@ -139,13 +153,24 @@ async function runChatCommand(
   promptParts: string[],
   rawOptions: RawChatOptions,
 ): Promise<void> {
-  const apiKey = resolveFlixaApiKey();
-  if (!apiKey) {
-    console.error(chalk.red("✗ Not logged in.") + " Run `flixa login` first.");
+  const options = normalizeOptions(rawOptions);
+  const providerContext = resolveProviderContext({
+    provider: options.provider,
+    model: options.model,
+    baseUrl: options.baseUrl,
+  });
+  if (!providerContext.apiKey) {
+    console.error(
+      chalk.red("✗ Not logged in.") +
+        ` Run \`flixa login --provider ${providerContext.provider}\` first.`,
+    );
     process.exit(1);
   }
 
-  const options = normalizeOptions(rawOptions);
+  const apiKey = providerContext.apiKey;
+  options.provider = providerContext.provider;
+  options.model = providerContext.model;
+  options.baseUrl = providerContext.baseUrl || options.baseUrl;
   const session = await resolveSession(options);
   options.system = buildInstructionSystemPrompt(
     session.cwd || cwd(),
@@ -185,18 +210,25 @@ function normalizeOptions(rawOptions: RawChatOptions): ChatOptions {
   );
   const modeFlags = resolveModeFlags(rawOptions, defaults);
 
+  const providerContext = resolveProviderContext({
+    provider: rawOptions.provider,
+    model: rawOptions.model,
+    baseUrl: rawOptions.baseUrl,
+  });
+
   return {
-    model:
-      rawOptions.model?.trim() || getPersistedModel() || DEFAULT_FLIXA_MODEL,
+    provider: providerContext.provider,
+    model: providerContext.model || getPersistedModel() || DEFAULT_FLIXA_MODEL,
     system: undefined,
     rawSystem: rawOptions.system?.trim() || undefined,
     stream: rawOptions.stream ?? true,
     json: rawOptions.json ?? false,
-    baseUrl: rawOptions.baseUrl?.trim() || DEFAULT_FLIXA_BASE_URL,
+    baseUrl: providerContext.baseUrl,
     maxOutputTokens,
     continue: rawOptions.continue ?? false,
     resume: rawOptions.resume,
     autoMode: modeFlags.autoMode,
+    yoloMode: modeFlags.yoloMode,
     planMode: modeFlags.planMode,
     acceptEdits: modeFlags.acceptEdits,
     modeOverride: modeFlags.modeOverride,
@@ -234,17 +266,55 @@ async function runSingleTurn(
 ): Promise<void> {
   let assistantText = "";
   let rawResponse: FlixaResponse | undefined;
-  const reviewToolSafety = createToolSafetyReviewer(
-    apiKey,
-    options.model,
-    options.baseUrl,
-  );
 
   if (!options.json) {
     process.stdout.write(chalk.green("flixa: "));
   }
 
   try {
+    if (options.provider && options.provider !== "flixa") {
+      const result = await runSharedAgentTurn({
+        provider: options.provider,
+        model: options.model,
+        baseUrl: options.baseUrl,
+        prompt,
+        history: session.history,
+        system: options.system,
+        maxOutputTokens: options.maxOutputTokens,
+        planMode: options.planMode,
+        autoMode: options.autoMode,
+      });
+      assistantText = result.text.trim();
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              provider: result.context.provider,
+              model: result.context.model,
+              output_text: assistantText,
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        process.stdout.write(assistantText);
+        process.stdout.write("\n");
+      }
+      saveSession({
+        ...session,
+        model: result.context.model,
+        history: result.history,
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const reviewToolSafety = createToolSafetyReviewer(
+      apiKey,
+      options.model,
+      options.baseUrl,
+    );
     const resolvedModes = getEffectiveModes(options, session);
     const result = await runAgentTurn({
       apiKey,
@@ -255,9 +325,10 @@ async function runSingleTurn(
       baseUrl: options.baseUrl,
       maxOutputTokens: options.maxOutputTokens,
       autoMode: resolvedModes.autoMode,
+      yoloMode: resolvedModes.yoloMode,
       planMode: resolvedModes.planMode,
       acceptEdits: resolvedModes.acceptEdits,
-      reviewToolSafety,
+      reviewToolSafety: resolvedModes.yoloMode ? undefined : reviewToolSafety,
       requestToolApproval: options.yolo
         ? allowAllToolApprovals
         : options.json || !process.stdin.isTTY || !process.stdout.isTTY
@@ -286,6 +357,7 @@ async function runSingleTurn(
     session.model = options.model;
     session.system = options.system;
     session.autoMode = resolvedModes.autoMode;
+    session.yoloMode = resolvedModes.yoloMode;
     session.planMode = resolvedModes.planMode;
     session.acceptEdits = resolvedModes.acceptEdits;
     setPersistedModel(options.model);
@@ -395,6 +467,7 @@ function resolveModeFlags(
   defaults: ReturnType<typeof getPersistedModeDefaults>,
 ): {
   autoMode: boolean;
+  yoloMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
   modeOverride: FooterModeOverride;
@@ -402,15 +475,27 @@ function resolveModeFlags(
   if (rawOptions.plan) {
     return {
       autoMode: false,
+      yoloMode: false,
       planMode: true,
       acceptEdits: false,
       modeOverride: "plan",
     };
   }
 
+  if (rawOptions.yoloMode) {
+    return {
+      autoMode: false,
+      yoloMode: true,
+      planMode: false,
+      acceptEdits: false,
+      modeOverride: "yolo",
+    };
+  }
+
   if (rawOptions.auto) {
     return {
       autoMode: true,
+      yoloMode: false,
       planMode: false,
       acceptEdits: false,
       modeOverride: "auto",
@@ -420,6 +505,7 @@ function resolveModeFlags(
   if (rawOptions.acceptEdits) {
     return {
       autoMode: false,
+      yoloMode: false,
       planMode: false,
       acceptEdits: true,
       modeOverride: "accept-edits",
@@ -429,7 +515,18 @@ function resolveModeFlags(
   if (defaults.planMode) {
     return {
       autoMode: false,
+      yoloMode: false,
       planMode: true,
+      acceptEdits: false,
+      modeOverride: null,
+    };
+  }
+
+  if (defaults.yoloMode) {
+    return {
+      autoMode: false,
+      yoloMode: true,
+      planMode: false,
       acceptEdits: false,
       modeOverride: null,
     };
@@ -438,6 +535,7 @@ function resolveModeFlags(
   if (defaults.autoMode) {
     return {
       autoMode: true,
+      yoloMode: false,
       planMode: false,
       acceptEdits: false,
       modeOverride: null,
@@ -447,6 +545,7 @@ function resolveModeFlags(
   if (defaults.acceptEdits) {
     return {
       autoMode: false,
+      yoloMode: false,
       planMode: false,
       acceptEdits: true,
       modeOverride: null,
@@ -455,6 +554,7 @@ function resolveModeFlags(
 
   return {
     autoMode: false,
+    yoloMode: false,
     planMode: false,
     acceptEdits: false,
     modeOverride: null,
@@ -464,17 +564,22 @@ function resolveModeFlags(
 function getEffectiveModes(
   options: Pick<
     ChatOptions,
-    "autoMode" | "planMode" | "acceptEdits" | "modeOverride"
+    "autoMode" | "yoloMode" | "planMode" | "acceptEdits" | "modeOverride"
   >,
-  session: Pick<StoredChatSession, "autoMode" | "planMode" | "acceptEdits">,
+  session: Pick<
+    StoredChatSession,
+    "autoMode" | "yoloMode" | "planMode" | "acceptEdits"
+  >,
 ): {
   autoMode: boolean;
+  yoloMode: boolean;
   planMode: boolean;
   acceptEdits: boolean;
 } {
   if (options.modeOverride) {
     return {
       autoMode: options.autoMode,
+      yoloMode: options.yoloMode,
       planMode: options.planMode,
       acceptEdits: options.acceptEdits,
     };
@@ -482,6 +587,7 @@ function getEffectiveModes(
 
   return {
     autoMode: session.autoMode ?? options.autoMode,
+    yoloMode: session.yoloMode ?? options.yoloMode,
     planMode: session.planMode ?? options.planMode,
     acceptEdits: session.acceptEdits ?? options.acceptEdits,
   };
@@ -490,7 +596,7 @@ function getEffectiveModes(
 function createToolSafetyReviewer(
   apiKey: string,
   model: string,
-  baseUrl: string,
+  baseUrl?: string,
 ): (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult> {
   return async (
     request: ToolApprovalRequest,
