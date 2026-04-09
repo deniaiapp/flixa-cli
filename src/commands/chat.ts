@@ -172,19 +172,24 @@ async function runChatCommand(
   options.model = providerContext.model;
   options.baseUrl = providerContext.baseUrl || options.baseUrl;
   const session = await resolveSession(options);
-  options.system = buildInstructionSystemPrompt(
-    session.cwd || cwd(),
-    options.rawSystem,
-  );
   const promptFromArgs = promptParts.join(" ").trim();
   const promptFromStdin = promptFromArgs ? null : await readPromptFromStdin();
 
   if (promptFromArgs || promptFromStdin) {
     const prompt = promptFromArgs || promptFromStdin || "";
+    options.system = buildInstructionSystemPrompt(
+      session.cwd || cwd(),
+      options.rawSystem,
+      prompt,
+    );
     await runSingleTurn(apiKey, options, session, prompt);
     return;
   }
 
+  options.system = buildInstructionSystemPrompt(
+    session.cwd || cwd(),
+    options.rawSystem,
+  );
   restoreInteractiveStdin();
   await runInteractiveChat(apiKey, options, session);
 }
@@ -266,6 +271,11 @@ async function runSingleTurn(
 ): Promise<void> {
   let assistantText = "";
   let rawResponse: FlixaResponse | undefined;
+  const turnSystemPrompt = buildInstructionSystemPrompt(
+    session.cwd || cwd(),
+    options.rawSystem,
+    prompt,
+  );
 
   if (!options.json) {
     process.stdout.write(chalk.green("flixa: "));
@@ -279,7 +289,7 @@ async function runSingleTurn(
         baseUrl: options.baseUrl,
         prompt,
         history: session.history,
-        system: options.system,
+        system: turnSystemPrompt,
         maxOutputTokens: options.maxOutputTokens,
         planMode: options.planMode,
         autoMode: options.autoMode,
@@ -321,7 +331,7 @@ async function runSingleTurn(
       model: options.model,
       history: session.history,
       prompt,
-      system: options.system,
+      system: turnSystemPrompt,
       baseUrl: options.baseUrl,
       maxOutputTokens: options.maxOutputTokens,
       autoMode: resolvedModes.autoMode,
@@ -355,7 +365,7 @@ async function runSingleTurn(
     rawResponse = result.finalResponse;
     session.history = result.history;
     session.model = options.model;
-    session.system = options.system;
+    session.system = turnSystemPrompt;
     session.autoMode = resolvedModes.autoMode;
     session.yoloMode = resolvedModes.yoloMode;
     session.planMode = resolvedModes.planMode;

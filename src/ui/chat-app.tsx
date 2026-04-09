@@ -43,6 +43,7 @@ import {
   setPersistedModel,
   setPersistedModeDefaults,
 } from "../config/store.ts";
+import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
 
@@ -50,6 +51,7 @@ type InteractiveChatOptions = {
   provider?: string;
   model: string;
   system?: string;
+  rawSystem?: string;
   stream: boolean;
   baseUrl?: string;
   maxOutputTokens?: number;
@@ -462,6 +464,11 @@ function InteractiveChatApp({
           model: currentModel,
           baseUrl: options.baseUrl,
         });
+        const turnSystemPrompt = buildInstructionSystemPrompt(
+          activeSession.cwd || cwd(),
+          options.rawSystem,
+          trimmedPrompt,
+        );
 
         if (providerContext.provider === "flixa") {
           const result = await runAgentTurn({
@@ -469,7 +476,7 @@ function InteractiveChatApp({
             model: currentModel,
             history: conversation,
             prompt: trimmedPrompt,
-            system: options.system,
+            system: turnSystemPrompt,
             baseUrl: options.baseUrl,
             maxOutputTokens: options.maxOutputTokens,
             autoMode,
@@ -547,7 +554,7 @@ function InteractiveChatApp({
             ...activeSession,
             history: result.history,
             model: currentModel,
-            system: options.system,
+            system: turnSystemPrompt,
             autoMode,
             yoloMode,
             planMode,
@@ -564,7 +571,7 @@ function InteractiveChatApp({
             baseUrl: providerContext.baseUrl,
             history: conversation,
             prompt: trimmedPrompt,
-            system: options.system,
+            system: turnSystemPrompt,
             maxOutputTokens: options.maxOutputTokens,
             signal: abortController.signal,
             autoMode,
@@ -587,7 +594,7 @@ function InteractiveChatApp({
             ...activeSession,
             history: result.history,
             model: result.context.model,
-            system: options.system,
+            system: turnSystemPrompt,
             autoMode,
             yoloMode,
             planMode,
@@ -625,11 +632,13 @@ function InteractiveChatApp({
       loading,
       options.baseUrl,
       options.maxOutputTokens,
+      options.rawSystem,
       options.stream,
-      options.system,
       autoMode,
+      yoloMode,
       planMode,
       acceptEdits,
+      activeSession,
       reviewToolSafety,
       settleApprovalRequest,
     ],
