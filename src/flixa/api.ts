@@ -8,6 +8,15 @@ import {
 import { createOpenResponses } from "@ai-sdk/open-responses";
 import { getApiKey } from "../auth/service.ts";
 import { getDefaultProvider } from "../config/store.ts";
+import {
+  formatFlixaHttpError,
+  rethrowAsUserFacingFlixaError,
+} from "../http/flixaApiErrors.ts";
+import {
+  createFlixaFetch,
+  flixaFetch,
+  getFlixaCliClientHeaders,
+} from "../http/flixaClientHeaders.ts";
 
 export const DEFAULT_FLIXA_BASE_URL =
   process.env.FLIXA_BASE_URL?.trim() || "https://api.flixa.engineer/v1/agent";
@@ -160,14 +169,14 @@ export async function fetchAvailableModels(options: {
   apiKey: string;
   baseUrl?: string;
 }): Promise<FlixaModelDefinition[]> {
-  const response = await fetch(`${resolveApiRoot(options.baseUrl)}/models`, {
+  const response = await flixaFetch(`${resolveApiRoot(options.baseUrl)}/models`, {
     headers: {
       Authorization: `Bearer ${options.apiKey}`,
     },
   });
 
   if (!response.ok) {
-    throw new Error(await formatApiError(response));
+    throw new Error(await formatFlixaHttpError(response));
   }
 
   const payload = (await response.json()) as unknown;
@@ -178,14 +187,17 @@ export async function fetchDeniUsage(options: {
   apiKey: string;
   baseUrl?: string;
 }): Promise<DeniUsageInfo> {
-  const response = await fetch(`${resolveApiRoot(options.baseUrl)}/deni/usage`, {
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
+  const response = await flixaFetch(
+    `${resolveApiRoot(options.baseUrl)}/deni/usage`,
+    {
+      headers: {
+        Authorization: `Bearer ${options.apiKey}`,
+      },
     },
-  });
+  );
 
   if (!response.ok) {
-    throw new Error(await formatApiError(response));
+    throw new Error(await formatFlixaHttpError(response));
   }
 
   return (await response.json()) as DeniUsageInfo;
@@ -226,31 +238,35 @@ export async function streamResponse(
     );
   }
 
-  const messages = buildModelMessages(options);
-  const aiTools = buildAiSdkTools(options.tools);
-  const model = createResponsesModel(options);
-  const result = streamText({
-    model,
-    messages,
-    system: options.system,
-    maxOutputTokens: options.maxOutputTokens,
-    abortSignal: options.signal,
-    maxRetries: 0,
-    ...(aiTools
-      ? {
-          tools: aiTools,
-          toolChoice: (options.toolChoice ?? "auto") as "auto" | "none",
-        }
-      : {}),
-  });
+  try {
+    const messages = buildModelMessages(options);
+    const aiTools = buildAiSdkTools(options.tools);
+    const model = createResponsesModel(options);
+    const result = streamText({
+      model,
+      messages,
+      system: options.system,
+      maxOutputTokens: options.maxOutputTokens,
+      abortSignal: options.signal,
+      maxRetries: 0,
+      ...(aiTools
+        ? {
+            tools: aiTools,
+            toolChoice: (options.toolChoice ?? "auto") as "auto" | "none",
+          }
+        : {}),
+    });
 
-  let text = "";
-  for await (const delta of result.textStream) {
-    text += delta;
-    onText(delta);
+    let text = "";
+    for await (const delta of result.textStream) {
+      text += delta;
+      onText(delta);
+    }
+
+    return { text };
+  } catch (error) {
+    rethrowAsUserFacingFlixaError(error);
   }
-
-  return { text };
 }
 
 export async function generateResponseTurn(options: {
@@ -264,40 +280,27 @@ export async function generateResponseTurn(options: {
   tools?: FunctionToolDefinition[];
   toolChoice?: "auto" | "none";
 }): Promise<GeneratedResponseTurn> {
-  const aiTools = buildAiSdkTools(options.tools);
-  const result = await generateText({
-    model: createResponsesModel(options),
-    messages: options.messages,
-    system: options.system,
-    maxOutputTokens: options.maxOutputTokens,
-    abortSignal: options.signal,
-    maxRetries: 0,
-    ...(aiTools
-      ? {
-          tools: aiTools,
-          toolChoice: (options.toolChoice ?? "auto") as "auto" | "none",
-        }
-      : {}),
-  });
+  try {
+    const aiTools = buildAiSdkTools(options.tools);
+    const result = await generateText({
+      model: createResponsesModel(options),
+      messages: options.messages,
+      system: options.system,
+      maxOutputTokens: options.maxOutputTokens,
+      abortSignal: options.signal,
+      maxRetries: 0,
+      ...(aiTools
+        ? {
+            tools: aiTools,
+            toolChoice: (options.toolChoice ?? "auto") as "auto" | "none",
+          }
+        : {}),
+    });
 
-  return {
-    assistantText: result.text,
-    thinkingText: result.reasoningText ?? undefined,
-    toolCalls: result.toolCalls.map((toolCall) => ({
-      callId: toolCall.toolCallId,
-      name: toolCall.toolName,
-      argumentsText:
-        typeof toolCall.input === "string"
-          ? toolCall.input
-          : JSON.stringify(toolCall.input),
-    })),
-    responseMessages: result.response.messages as ModelMessage[],
-    response: coerceFlixaResponse(
-      result.response.body,
-      result.response.id,
-      result.text,
-      result.reasoningText,
-      result.toolCalls.map((toolCall) => ({
+    return {
+      assistantText: result.text,
+      thinkingText: result.reasoningText ?? undefined,
+      toolCalls: result.toolCalls.map((toolCall) => ({
         callId: toolCall.toolCallId,
         name: toolCall.toolName,
         argumentsText:
@@ -305,8 +308,25 @@ export async function generateResponseTurn(options: {
             ? toolCall.input
             : JSON.stringify(toolCall.input),
       })),
-    ),
-  };
+      responseMessages: result.response.messages as ModelMessage[],
+      response: coerceFlixaResponse(
+        result.response.body,
+        result.response.id,
+        result.text,
+        result.reasoningText,
+        result.toolCalls.map((toolCall) => ({
+          callId: toolCall.toolCallId,
+          name: toolCall.toolName,
+          argumentsText:
+            typeof toolCall.input === "string"
+              ? toolCall.input
+              : JSON.stringify(toolCall.input),
+        })),
+      ),
+    };
+  } catch (error) {
+    rethrowAsUserFacingFlixaError(error);
+  }
 }
 
 export function createResponsesModel(options: {
@@ -318,6 +338,8 @@ export function createResponsesModel(options: {
     name: "flixa",
     url: `${resolveBaseUrl(options.baseUrl)}/responses`,
     apiKey: options.apiKey,
+    headers: getFlixaCliClientHeaders(),
+    fetch: createFlixaFetch(),
   })(options.model);
 }
 
@@ -480,32 +502,6 @@ export function resolveApiRoot(baseUrl?: string): string {
   return normalizedBaseUrl.endsWith("/agent")
     ? normalizedBaseUrl.slice(0, -"/agent".length)
     : normalizedBaseUrl;
-}
-
-async function formatApiError(response: Response): Promise<string> {
-  const statusLine = `Flixa API request failed: ${response.status} ${response.statusText}`;
-
-  try {
-    const payload = (await response.json()) as Record<string, unknown>;
-    const message = extractErrorMessage(payload);
-    return message ? `${statusLine} - ${message}` : statusLine;
-  } catch {
-    return statusLine;
-  }
-}
-
-function extractErrorMessage(payload: Record<string, unknown>): string | null {
-  if (typeof payload["message"] === "string") {
-    return payload["message"];
-  }
-
-  const error = payload["error"];
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-
-  const errorMessage = (error as Record<string, unknown>)["message"];
-  return typeof errorMessage === "string" ? errorMessage : null;
 }
 
 function isFlixaResponse(value: unknown): value is FlixaResponse {

@@ -26,6 +26,11 @@ import {
   type ProviderId,
 } from "./registry.ts";
 import type { ChatMessage } from "../flixa/api.ts";
+import {
+  createFlixaFetch,
+  getFlixaCliClientHeaders,
+} from "../http/flixaClientHeaders.ts";
+import { rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
 import { cwd } from "node:process";
 
 export interface ProviderResolutionOptions {
@@ -218,8 +223,17 @@ export function createLanguageModel(
       });
       return openai.responses(context.model);
     }
-    case "anthropic":
     case "flixa": {
+      const anthropic = createAnthropic({
+        apiKey,
+        ...(context.baseUrl ? { baseURL: context.baseUrl } : {}),
+        headers: getFlixaCliClientHeaders(),
+        // AI SDK sets User-Agent to `ai/...`; re-apply CLI signals on the wire.
+        fetch: createFlixaFetch(),
+      });
+      return anthropic(context.model);
+    }
+    case "anthropic": {
       const anthropic = createAnthropic({
         apiKey,
         ...(context.baseUrl ? { baseURL: context.baseUrl } : {}),
@@ -249,20 +263,27 @@ export async function generateProviderText(options: {
   maxOutputTokens?: number;
 }): Promise<{ text: string; context: ResolvedProviderContext }> {
   const context = resolveProviderContext(options);
-  const model = createLanguageModel(context);
-  const result = await generateText({
-    model,
-    prompt: options.prompt,
-    ...(options.system ? { system: options.system } : {}),
-    ...(typeof options.maxOutputTokens === "number"
-      ? { maxOutputTokens: options.maxOutputTokens }
-      : {}),
-  });
+  try {
+    const model = createLanguageModel(context);
+    const result = await generateText({
+      model,
+      prompt: options.prompt,
+      ...(options.system ? { system: options.system } : {}),
+      ...(typeof options.maxOutputTokens === "number"
+        ? { maxOutputTokens: options.maxOutputTokens }
+        : {}),
+    });
 
-  return {
-    text: result.text,
-    context,
-  };
+    return {
+      text: result.text,
+      context,
+    };
+  } catch (error) {
+    if (context.provider === "flixa") {
+      rethrowAsUserFacingFlixaError(error);
+    }
+    throw error;
+  }
 }
 
 export async function runSharedAgentTurn(
@@ -300,31 +321,38 @@ export async function runSharedAgentTurn(
     ]),
   );
 
-  const result = await generateText({
-    model,
-    system: options.system,
-    messages: [
-      ...chatHistoryToModelMessages(options.history),
-      { role: "user", content: options.prompt },
-    ],
-    tools,
-    stopWhen: stepCountIs(8),
-    abortSignal: options.signal,
-    ...(typeof options.maxOutputTokens === "number"
-      ? { maxOutputTokens: options.maxOutputTokens }
-      : {}),
-  });
+  try {
+    const result = await generateText({
+      model,
+      system: options.system,
+      messages: [
+        ...chatHistoryToModelMessages(options.history),
+        { role: "user", content: options.prompt },
+      ],
+      tools,
+      stopWhen: stepCountIs(8),
+      abortSignal: options.signal,
+      ...(typeof options.maxOutputTokens === "number"
+        ? { maxOutputTokens: options.maxOutputTokens }
+        : {}),
+    });
 
-  const text = result.text.trim();
-  return {
-    text,
-    context,
-    history: [
-      ...options.history,
-      { role: "user", content: options.prompt },
-      { role: "assistant", content: text },
-    ],
-  };
+    const text = result.text.trim();
+    return {
+      text,
+      context,
+      history: [
+        ...options.history,
+        { role: "user", content: options.prompt },
+        { role: "assistant", content: text },
+      ],
+    };
+  } catch (error) {
+    if (context.provider === "flixa") {
+      rethrowAsUserFacingFlixaError(error);
+    }
+    throw error;
+  }
 }
 
 export async function listProviderModelOptions(
