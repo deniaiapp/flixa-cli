@@ -71,3 +71,7 @@ it with:
 ```sh
 openclaw plugins install clawhub:@deniai/openclaw-flixa
 ```
+
+ClawHub publishing requires a `CLAWHUB_TOKEN` repository secret. The release
+workflow publishes both the npm artifact and the ClawHub `code-plugin` artifact
+with the same version.

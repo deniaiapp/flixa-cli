@@ -60,6 +60,32 @@ jobs:
         working-directory: integrations/openclaw-flixa
         run: npm publish --tag canary --access public --provenance
 
+      - name: Publish OpenClaw plugin to ClawHub canary
+        if: github.ref_type == 'branch'
+        working-directory: integrations/openclaw-flixa
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+          VERSION: ${{ steps.package.outputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "${CLAWHUB_TOKEN}" ]; then
+            echo "CLAWHUB_TOKEN is required to publish the OpenClaw plugin to ClawHub." >&2
+            exit 1
+          fi
+          npx --yes clawhub@0.23.3 login --token "${CLAWHUB_TOKEN}" --no-browser
+          npx --yes clawhub@0.23.3 package publish . \
+            --family code-plugin \
+            --name "@deniai/openclaw-flixa" \
+            --owner raicdev \
+            --version "${VERSION}-canary.${RUN_NUMBER}" \
+            --tags canary \
+            --source-repo deniaiapp/flixa-cli \
+            --source-commit "${GITHUB_SHA}" \
+            --source-path integrations/openclaw-flixa \
+            --wait \
+            --json
+
       - name: Publish release
         if: github.ref_type == 'tag'
         run: npm publish --access public --provenance
@@ -68,3 +94,28 @@ jobs:
         if: github.ref_type == 'tag'
         working-directory: integrations/openclaw-flixa
         run: npm publish --access public --provenance
+
+      - name: Publish OpenClaw plugin to ClawHub release
+        if: github.ref_type == 'tag'
+        working-directory: integrations/openclaw-flixa
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+          VERSION: ${{ steps.package.outputs.version }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "${CLAWHUB_TOKEN}" ]; then
+            echo "CLAWHUB_TOKEN is required to publish the OpenClaw plugin to ClawHub." >&2
+            exit 1
+          fi
+          npx --yes clawhub@0.23.3 login --token "${CLAWHUB_TOKEN}" --no-browser
+          npx --yes clawhub@0.23.3 package publish . \
+            --family code-plugin \
+            --name "@deniai/openclaw-flixa" \
+            --owner raicdev \
+            --version "${VERSION}" \
+            --tags latest \
+            --source-repo deniaiapp/flixa-cli \
+            --source-commit "${GITHUB_SHA}" \
+            --source-path integrations/openclaw-flixa \
+            --wait \
+            --json
