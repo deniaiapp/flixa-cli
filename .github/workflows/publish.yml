@@ -106,7 +106,7 @@ jobs:
             --owner deniai \
             --version "${VERSION}-canary.${RUN_NUMBER}" \
             --tags canary \
-            --topics coding,ship,verification,openclaw \
+            --topics coding,ship,verification \
             --changelog "Flixa Ship canary ${VERSION}-canary.${RUN_NUMBER}" \
             --source-repo deniaiapp/flixa-cli \
             --source-commit "${GITHUB_SHA}" \
@@ -166,7 +166,7 @@ jobs:
             --owner deniai \
             --version "${VERSION}" \
             --tags latest \
-            --topics coding,ship,verification,openclaw \
+            --topics coding,ship,verification \
             --changelog "Flixa Ship ${VERSION}" \
             --source-repo deniaiapp/flixa-cli \
             --source-commit "${GITHUB_SHA}" \
