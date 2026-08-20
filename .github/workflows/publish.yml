@@ -77,7 +77,7 @@ jobs:
           npx --yes clawhub@0.23.3 package publish . \
             --family code-plugin \
             --name "@deniai/openclaw-flixa" \
-            --owner raicdev \
+            --owner deniai \
             --version "${VERSION}-canary.${RUN_NUMBER}" \
             --tags canary \
             --source-repo deniaiapp/flixa-cli \
@@ -111,7 +111,7 @@ jobs:
           npx --yes clawhub@0.23.3 package publish . \
             --family code-plugin \
             --name "@deniai/openclaw-flixa" \
-            --owner raicdev \
+            --owner deniai \
             --version "${VERSION}" \
             --tags latest \
             --source-repo deniaiapp/flixa-cli \
