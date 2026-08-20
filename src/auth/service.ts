@@ -7,6 +7,17 @@ const POLLING_INTERVAL_MS = 5_000;
 const DEVICE_AUTH_TIMEOUT_MS = 15 * 60 * 1_000;
 
 export function getApiKey(provider: ProviderId = DEFAULT_PROVIDER): string | null {
+  const environmentNames =
+    provider === "flixa"
+      ? ["FLIXA_API_KEY", "OPENAI_API_KEY"]
+      : getProviderDefinition(provider).apiKeyEnvNames ?? [];
+  for (const environmentName of environmentNames) {
+    const environmentValue = process.env[environmentName]?.trim();
+    if (environmentValue) {
+      return environmentValue;
+    }
+  }
+
   return loadSecret(provider);
 }
 

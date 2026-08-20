@@ -52,6 +52,8 @@ export function registerLoginCommand(program: Command): void {
 
       if (providerDefinition.authType === "device") {
         await runDeviceAuthLogin(provider);
+      } else if (providerDefinition.authType === "environment") {
+        runEnvironmentLogin(provider);
       } else {
         await runApiKeyLogin(provider, options.baseUrl);
       }
@@ -101,7 +103,9 @@ async function resolveProviderOption(rawProvider: string | undefined): Promise<P
       description:
         provider.authType === "device"
           ? "Browser-based device authentication"
-          : "Bring your own API key",
+          : provider.authType === "environment"
+            ? "Use the provider's environment variables"
+            : "Bring your own API key",
     })),
   });
 }
@@ -185,11 +189,15 @@ async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Pro
 
   const result = saveApiKey(provider, apiKey);
 
-  if (providerDefinition.defaultBaseUrl || provider === "custom-openai") {
+  if (
+    providerDefinition.defaultBaseUrl ||
+    providerDefinition.baseUrlRequired ||
+    provider === "custom-openai"
+  ) {
     const persistedBaseUrl = getPersistedProviderBaseUrl(provider);
     const baseUrl = (baseUrlOption ?? (await input({
-      message:
-        provider === "custom-openai"
+        message:
+          provider === "custom-openai"
           ? "Base URL for your OpenAI-compatible endpoint"
           : `Base URL for ${providerDefinition.displayName} (leave blank to use default)`,
       default: persistedBaseUrl ?? providerDefinition.defaultBaseUrl ?? "",
@@ -197,13 +205,40 @@ async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Pro
 
     if (baseUrl) {
       setPersistedProviderBaseUrl(provider, baseUrl);
-    } else if (provider === "custom-openai") {
-      console.error(chalk.red("✗ Login failed:") + " custom-openai requires a base URL.");
+    } else if (providerDefinition.baseUrlRequired || provider === "custom-openai") {
+      console.error(
+        chalk.red("✗ Login failed:") +
+          ` ${providerDefinition.displayName} requires a base URL.`,
+      );
       process.exit(1);
     }
   }
 
   logSavedBackend(provider, result.backend, result.warning);
+}
+
+function runEnvironmentLogin(provider: ProviderId): void {
+  const definition = getProviderDefinition(provider);
+  const variables =
+    definition.environmentVariables ?? definition.apiKeyEnvNames ?? [];
+  const configured = variables.filter((name) => process.env[name]?.trim());
+  const missing = variables.filter((name) => !process.env[name]?.trim());
+
+  console.log(
+    chalk.cyan(`\n${definition.displayName} uses environment-based authentication.`),
+  );
+  if (variables.length > 0) {
+    console.log(chalk.dim(`  Required variables: ${variables.join(", ")}`));
+  }
+  if (configured.length > 0) {
+    console.log(chalk.green(`  Configured: ${configured.join(", ")}`));
+  }
+  if (missing.length > 0) {
+    console.log(chalk.yellow(`  Missing: ${missing.join(", ")}`));
+  }
+  if (definition.baseUrlRequired) {
+    console.log(chalk.dim("  Pass --base-url when the provider endpoint is not discoverable automatically."));
+  }
 }
 
 function logSavedBackend(provider: ProviderId, backend: string, warning?: string): void {

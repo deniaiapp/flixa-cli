@@ -21,6 +21,7 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "start": "bun run src/index.ts",
+    "providers:update": "node scripts/update-models-dev.mjs",
     "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
   },
   "devDependencies": {

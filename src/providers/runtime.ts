@@ -30,6 +30,7 @@ import {
 import {
   getProviderDefinition,
   isProviderId,
+  type ProviderDefinition,
   type ProviderId,
 } from "./registry.ts";
 import type { ChatMessage } from "../flixa/api.ts";
@@ -52,6 +53,7 @@ export interface ResolvedProviderContext {
   model: string;
   baseUrl?: string;
   displayName: string;
+  runtime: ProviderDefinition["runtime"];
 }
 
 export interface SharedAgentRunOptions {
@@ -186,10 +188,13 @@ export function resolveProviderContext(
     model,
     baseUrl,
     displayName: definition.displayName,
+    runtime: definition.runtime,
   };
 }
 
 export function resolveApiKeyForProvider(provider: ProviderId): string | null {
+  const definition = getProviderDefinition(provider);
+
   switch (provider) {
     case "flixa": {
       const envApiKey = process.env.FLIXA_API_KEY?.trim();
@@ -198,39 +203,47 @@ export function resolveApiKeyForProvider(provider: ProviderId): string | null {
       if (openAiCompatibleApiKey) return openAiCompatibleApiKey;
       return getApiKey(provider);
     }
-    case "openai":
-    case "openrouter":
-    case "custom-openai": {
-      return process.env.OPENAI_API_KEY?.trim() || getApiKey(provider);
-    }
-    case "anthropic": {
-      return process.env.ANTHROPIC_API_KEY?.trim() || getApiKey(provider);
-    }
-    case "google": {
-      return (
-        process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ||
-        process.env.GEMINI_API_KEY?.trim() ||
-        getApiKey(provider)
-      );
+  }
+
+  for (const envName of definition.apiKeyEnvNames ?? []) {
+    const value = process.env[envName]?.trim();
+    if (value) {
+      return value;
     }
   }
+
+  return getApiKey(provider);
 }
 
 export function createLanguageModel(
   context: ResolvedProviderContext,
 ): LanguageModel {
+  const definition = getProviderDefinition(context.provider);
+  if (definition.baseUrlRequired && !context.baseUrl) {
+    throw new Error(
+      `${context.displayName} requires a base URL. Pass --base-url or configure it during login.`,
+    );
+  }
+
+  if (context.runtime === "external") {
+    throw new Error(
+      `${context.displayName} requires provider-specific credentials or SDK configuration. Configure its environment variables and use --base-url if the endpoint is OpenAI-compatible.`,
+    );
+  }
+
   const apiKey = context.apiKey;
   if (!apiKey) {
     throw new Error(`No API key configured for ${context.displayName}. Run \`flixa login --provider ${context.provider}\` first.`);
   }
 
-  switch (context.provider) {
-    case "openai":
-    case "openrouter":
-    case "custom-openai": {
+  switch (context.runtime) {
+    case "openai-responses":
+    case "openai-chat": {
       const openai = createOpenAI({
         apiKey,
-        ...(context.baseUrl ? { baseURL: context.baseUrl } : {}),
+        ...(context.baseUrl
+          ? { baseURL: normalizeOpenAiBaseUrl(context.baseUrl) }
+          : {}),
         ...(context.provider === "openrouter"
           ? {
               headers: {
@@ -240,7 +253,9 @@ export function createLanguageModel(
             }
           : {}),
       });
-      return openai.responses(context.model);
+      return context.runtime === "openai-responses"
+        ? openai.responses(context.model)
+        : openai.chat(context.model);
     }
     case "flixa": {
       const anthropic = createAnthropic({
@@ -520,10 +535,19 @@ export async function listProviderModelOptions(
   options: ProviderResolutionOptions = {},
 ): Promise<ProviderModelOption[]> {
   const context = resolveProviderContext(options);
+  const definition = getProviderDefinition(context.provider);
   if (!context.apiKey) {
     throw new Error(
       `No API key configured for ${context.displayName}. Run \`flixa login --provider ${context.provider}\` first.`,
     );
+  }
+
+  if (definition.catalogModels && definition.catalogModels.length > 0) {
+    return definition.catalogModels.map((model) => ({
+      id: model.id,
+      label: model.name || model.id,
+      description: model.description,
+    }));
   }
 
   switch (context.provider) {
@@ -537,6 +561,14 @@ export async function listProviderModelOptions(
     case "openrouter":
       return fetchOpenRouterModelOptions(context);
     case "flixa":
+      return [
+        {
+          id: context.model,
+          label: context.model,
+          description: "",
+        },
+      ];
+    default:
       return [
         {
           id: context.model,
@@ -849,6 +881,13 @@ function resolveApiBaseUrl(baseUrl?: string): string {
   }
 
   return resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+}
+
+function normalizeOpenAiBaseUrl(baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  return normalized.endsWith("/chat/completions")
+    ? normalized.slice(0, -"/chat/completions".length)
+    : normalized;
 }
 
 function resolveAnthropicModelsUrl(baseUrl?: string): string {

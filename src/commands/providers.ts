@@ -27,16 +27,34 @@ export function registerProvidersCommand(program: Command): void {
         const configured = Boolean(getApiKey(provider.id));
         const baseUrl = getPersistedProviderBaseUrl(provider.id) ?? provider.defaultBaseUrl ?? "-";
         return {
-          provider: provider.id.padEnd(14),
-          status: (configured ? "configured" : "missing").padEnd(11),
-          default: (provider.id === defaultProvider ? "yes" : "no").padEnd(7),
+          provider: provider.id,
+          status: configured ? "configured" : "missing",
+          default: provider.id === defaultProvider ? "yes" : "no",
           baseUrl,
         };
       });
 
-      console.log(chalk.bold("Provider       Status      Default  Base URL"));
+      const providerWidth = Math.max(
+        "Provider".length,
+        ...rows.map((row) => row.provider.length),
+      );
+      const statusWidth = Math.max(
+        "Status".length,
+        ...rows.map((row) => row.status.length),
+      );
+      const defaultWidth = Math.max(
+        "Default".length,
+        ...rows.map((row) => row.default.length),
+      );
+      console.log(
+        chalk.bold(
+          `${"Provider".padEnd(providerWidth)}  ${"Status".padEnd(statusWidth)}  ${"Default".padEnd(defaultWidth)}  Base URL`,
+        ),
+      );
       for (const row of rows) {
-        console.log(`${row.provider}${row.status}${row.default}${row.baseUrl}`);
+        console.log(
+          `${row.provider.padEnd(providerWidth)}  ${row.status.padEnd(statusWidth)}  ${row.default.padEnd(defaultWidth)}  ${row.baseUrl}`,
+        );
       }
     });
 

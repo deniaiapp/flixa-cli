@@ -40,14 +40,26 @@ flixa login --provider openai
 flixa login --provider custom-openai --base-url http://localhost:1234/v1
 ```
 
-Supported providers:
+Flixa includes the built-in providers above plus the provider catalog from
+`models.dev` (OpenAI-compatible gateways, Anthropic-compatible endpoints, and
+other catalogued providers). Inspect the available catalog with:
 
-- `flixa`
-- `openai`
-- `anthropic`
-- `google`
-- `openrouter`
-- `custom-openai`
+Built-ins: `flixa`, `openai`, `anthropic`, `google`, `openrouter`, and
+`custom-openai`.
+
+```sh
+flixa providers list
+```
+
+The bundled catalog can be refreshed during development with:
+
+```sh
+bun run providers:update
+```
+
+Providers with an OpenAI-compatible endpoint use the shared agent runtime;
+providers that require native cloud credentials show the required environment
+variables and must be configured outside Flixa.
 
 Notes:
 
