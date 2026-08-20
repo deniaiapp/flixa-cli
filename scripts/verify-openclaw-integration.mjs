@@ -9,7 +9,9 @@ const packageJson = readJson(join(root, "package.json"));
 const manifest = readJson(join(root, "openclaw.plugin.json"));
 const entry = readFileSync(join(root, "src", "index.ts"), "utf8");
 const skillPath = join(repositoryRoot, "skills", "flixa-ship", "SKILL.md");
-const skill = readFileSync(skillPath, "utf8");
+const skill = readFileSync(skillPath, "utf8")
+  .replace(/^\uFEFF/, "")
+  .replace(/\r\n/g, "\n");
 
 assert(
   packageJson.openclaw?.extensions?.[0] === "./src/index.ts",
