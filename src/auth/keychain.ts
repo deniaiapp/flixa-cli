@@ -28,8 +28,14 @@ function runCommand(command: string, args: string[], options: Parameters<typeof 
 
   return {
     status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout:
+      typeof result.stdout === "string"
+        ? result.stdout
+        : result.stdout?.toString("utf-8") ?? "",
+    stderr:
+      typeof result.stderr === "string"
+        ? result.stderr
+        : result.stderr?.toString("utf-8") ?? "",
     error: result.error,
   };
 }
@@ -146,7 +152,13 @@ function runPs1(script: string): CommandResult {
   enforcePrivateFile(tmp);
 
   const result = runCommand("powershell", [
-    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmp,
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    tmp,
   ]);
 
   try {

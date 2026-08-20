@@ -11,6 +11,7 @@ import {
 } from "../flixa/api.ts";
 import {
   resolveProviderContext,
+  generateProviderText,
   runSharedAgentTurn,
 } from "../providers/runtime.ts";
 import {
@@ -83,9 +84,18 @@ export function registerChatCommand(program: Command): void {
   applyChatOptions(program);
   program
     .argument("[prompt...]", "Prompt to send to Flixa")
-    .action(async (promptParts: string[], options: RawChatOptions) => {
-      await runChatCommandWithExit(promptParts, options);
-    });
+    .action(
+      async (
+        promptParts: string[],
+        options: RawChatOptions,
+        command: Command,
+      ) => {
+        await runChatCommandWithExit(
+          promptParts,
+          mergeInheritedChatOptions(options, command),
+        );
+      },
+    );
 
   const chatCommand = program
     .command("chat")
@@ -94,9 +104,18 @@ export function registerChatCommand(program: Command): void {
   applyChatOptions(chatCommand);
   chatCommand
     .argument("[prompt...]", "Prompt to send to Flixa")
-    .action(async (promptParts: string[], options: RawChatOptions) => {
-      await runChatCommandWithExit(promptParts, options);
-    });
+    .action(
+      async (
+        promptParts: string[],
+        options: RawChatOptions,
+        command: Command,
+      ) => {
+        await runChatCommandWithExit(
+          promptParts,
+          mergeInheritedChatOptions(options, command),
+        );
+      },
+    );
 
   const resumeCommand = program
     .command("resume")
@@ -111,9 +130,10 @@ export function registerChatCommand(program: Command): void {
         sessionId: string | undefined,
         promptParts: string[],
         options: RawChatOptions,
+        command: Command,
       ) => {
         await runChatCommandWithExit(promptParts, {
-          ...options,
+          ...mergeInheritedChatOptions(options, command),
           resume: sessionId || true,
         });
       },
@@ -207,6 +227,16 @@ async function runChatCommandWithExit(
   }
 }
 
+function mergeInheritedChatOptions(
+  options: RawChatOptions,
+  command: Command,
+): RawChatOptions {
+  return {
+    ...(command.parent?.opts?.() as Partial<RawChatOptions> | undefined),
+    ...options,
+  };
+}
+
 function normalizeOptions(rawOptions: RawChatOptions): ChatOptions {
   const defaults = getPersistedModeDefaults();
   const maxOutputTokens = parseIntegerOption(
@@ -293,6 +323,33 @@ async function runSingleTurn(
         maxOutputTokens: options.maxOutputTokens,
         planMode: options.planMode,
         autoMode: options.autoMode,
+        yoloMode: false,
+        acceptEdits: options.acceptEdits,
+        reviewToolSafety: options.autoMode
+          ? createProviderToolSafetyReviewer(
+              options.provider,
+              options.model,
+              options.baseUrl,
+            )
+          : undefined,
+        requestToolApproval:
+          options.yolo || (process.stdin.isTTY && process.stdout.isTTY)
+            ? options.yolo
+              ? allowAllToolApprovals
+              : promptForToolApproval
+            : undefined,
+        onEvent: options.json
+          ? undefined
+          : (event) => {
+              if (event.type === "tool_start") {
+                process.stdout.write(`\n${chalk.dim(`· ${event.summary}`)}\n`);
+              } else if (
+                event.type === "tool_result" &&
+                event.summary.startsWith("Denied ")
+              ) {
+                process.stdout.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
+              }
+            },
       });
       assistantText = result.text.trim();
       if (options.json) {
@@ -313,6 +370,7 @@ async function runSingleTurn(
       }
       saveSession({
         ...session,
+        provider: result.context.provider,
         model: result.context.model,
         history: result.history,
         updatedAt: new Date().toISOString(),
@@ -364,6 +422,7 @@ async function runSingleTurn(
     assistantText = result.finalText.trim();
     rawResponse = result.finalResponse;
     session.history = result.history;
+    session.provider = options.provider;
     session.model = options.model;
     session.system = turnSystemPrompt;
     session.autoMode = resolvedModes.autoMode;
@@ -441,6 +500,7 @@ async function resolveSession(
   }
 
   const session = createSession(currentCwd, options.model, options.system, {
+    provider: options.provider,
     autoMode: options.autoMode,
     planMode: options.planMode,
     acceptEdits: options.acceptEdits,
@@ -638,6 +698,47 @@ function createToolSafetyReviewer(
       const normalizedVerdict = verdict.toUpperCase();
       return {
         safe: normalizedVerdict.startsWith("SAFE:"),
+        verdict,
+      };
+    } catch (error) {
+      return {
+        safe: false,
+        verdict:
+          error instanceof Error
+            ? `UNSAFE: Safety review failed: ${error.message}`
+            : `UNSAFE: Safety review failed: ${String(error)}`,
+      };
+    }
+  };
+}
+
+function createProviderToolSafetyReviewer(
+  provider: string | undefined,
+  model: string,
+  baseUrl?: string,
+): (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult> {
+  return async (
+    request: ToolApprovalRequest,
+  ): Promise<ToolSafetyReviewResult> => {
+    try {
+      const result = await generateProviderText({
+        provider,
+        model,
+        baseUrl,
+        system:
+          "You are a safety reviewer for CLI tool calls. Respond with a short verdict only. Approve only if the request is narrowly scoped, justified by the provided reason, and appears safe for the local workspace. Reject if the reason is missing, vague, risky, destructive, or unrelated to the requested action. Format: SAFE: <brief reason> or UNSAFE: <brief reason>.",
+        prompt: [
+          `Tool: ${request.toolName}`,
+          `Title: ${request.title}`,
+          `Reason: ${request.reason}`,
+          `Summary: ${request.summary}`,
+          `Details:\n${request.details.join("\n")}`,
+        ].join("\n"),
+        maxOutputTokens: 120,
+      });
+      const verdict = result.text.trim() || "UNSAFE: Empty review response.";
+      return {
+        safe: verdict.toUpperCase().startsWith("SAFE:"),
         verdict,
       };
     } catch (error) {

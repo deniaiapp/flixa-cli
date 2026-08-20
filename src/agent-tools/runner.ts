@@ -45,6 +45,7 @@ export interface AgentRunResult {
 }
 
 export type AgentRunEvent =
+  | { type: "round_start"; round: number }
   | { type: "tool_start"; toolName: string; summary: string }
   | { type: "tool_result"; toolName: string; summary: string; output: string }
   | { type: "assistant_text"; text: string };
@@ -71,7 +72,10 @@ const DEFAULT_AGENT_SYSTEM_PROMPT = [
   "The current workspace is the user's repository root.",
 ].join(" ");
 
-const MAX_TOOL_ROUNDS = Infinity;
+// A runaway model must not be able to keep a CLI process alive forever. This
+// is intentionally generous enough for repository-wide work while giving the
+// user a clear failure boundary.
+const MAX_TOOL_ROUNDS = 40;
 
 export async function runAgentTurn(
   options: AgentRunOptions,
@@ -96,6 +100,7 @@ export async function runAgentTurn(
   const executedToolResults: ExecutedToolResult[] = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    options.onEvent?.({ type: "round_start", round: round + 1 });
     const response = await generateResponseTurn({
       apiKey: options.apiKey,
       model: options.model,
@@ -241,7 +246,7 @@ export async function runAgentTurn(
   throw new Error("Tool loop exceeded the maximum number of rounds.");
 }
 
-function summarizeToolCall(toolName: string, argumentsText: string): string {
+export function summarizeToolCall(toolName: string, argumentsText: string): string {
   const parsed = safeParseArguments(argumentsText);
   const filePath = getStringArgument(parsed, "file_path");
   if (filePath) {
@@ -276,7 +281,7 @@ function summarizeToolCall(toolName: string, argumentsText: string): string {
   return compact ? shorten(compact, 100) : toolName;
 }
 
-function getToolApprovalRequest(
+export function getToolApprovalRequest(
   toolName: string,
   argumentsText: string,
   options: Pick<AgentRunOptions, "autoMode" | "yoloMode" | "acceptEdits" | "planMode">,
@@ -343,7 +348,7 @@ function getToolApprovalRequest(
   }
 }
 
-function getToolSafetyReviewRequest(
+export function getToolSafetyReviewRequest(
   toolName: string,
   argumentsText: string,
   options: Pick<AgentRunOptions, "autoMode" | "planMode">,

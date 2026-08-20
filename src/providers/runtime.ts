@@ -21,6 +21,13 @@ import {
   type ToolExecutionContext,
 } from "../agent-tools/tools.ts";
 import {
+  getToolApprovalRequest,
+  getToolSafetyReviewRequest,
+  summarizeToolCall,
+  type ToolApprovalRequest,
+  type ToolSafetyReviewResult,
+} from "../agent-tools/runner.ts";
+import {
   getProviderDefinition,
   isProviderId,
   type ProviderId,
@@ -57,8 +64,20 @@ export interface SharedAgentRunOptions {
   maxOutputTokens?: number;
   signal?: AbortSignal;
   autoMode?: boolean;
+  yoloMode?: boolean;
   planMode?: boolean;
+  acceptEdits?: boolean;
+  requestToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
+  reviewToolSafety?: (
+    request: ToolApprovalRequest,
+  ) => Promise<ToolSafetyReviewResult>;
+  onEvent?: (event: SharedAgentRunEvent) => void;
 }
+
+export type SharedAgentRunEvent =
+  | { type: "round_start"; round: number }
+  | { type: "tool_start"; toolName: string; summary: string }
+  | { type: "tool_result"; toolName: string; summary: string; output: string };
 
 export interface SharedAgentRunResult {
   text: string;
@@ -307,21 +326,120 @@ export async function runSharedAgentTurn(
         description: definition.description,
         inputSchema: definition.parameters as never,
         execute: async (input) => {
-          const result = await executeToolCall(
-            {
-              name: definition.name,
-              callId: `${definition.name}-${Date.now()}`,
-              argumentsText: JSON.stringify(input),
-            },
-            toolContext,
-          );
-          return result.output;
+          const callId = `${definition.name}-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+          const argumentsText = JSON.stringify(input ?? {});
+          const summary = summarizeToolCall(definition.name, argumentsText);
+          const requestOptions = {
+            autoMode: options.autoMode,
+            yoloMode: options.yoloMode,
+            acceptEdits: options.acceptEdits,
+            planMode: options.planMode,
+          };
+
+          if (!options.yoloMode) {
+            const safetyRequest = getToolSafetyReviewRequest(
+              definition.name,
+              argumentsText,
+              requestOptions,
+            );
+            if (safetyRequest) {
+              const review = options.reviewToolSafety
+                ? await options.reviewToolSafety(safetyRequest)
+                : {
+                    safe: false,
+                    verdict: "UNSAFE: No safety reviewer configured for auto mode.",
+                  };
+              if (!review.safe) {
+                const denied = createSharedDeniedToolResult(
+                  definition.name,
+                  summary,
+                  `Blocked by safety review: ${review.verdict}`,
+                );
+                options.onEvent?.({
+                  type: "tool_result",
+                  toolName: definition.name,
+                  summary: denied.summary,
+                  output: denied.output,
+                });
+                return denied.output;
+              }
+            }
+
+            const approvalRequest = getToolApprovalRequest(
+              definition.name,
+              argumentsText,
+              requestOptions,
+            );
+            if (approvalRequest) {
+              const approved = options.requestToolApproval
+                ? await options.requestToolApproval(approvalRequest)
+                : false;
+              if (!approved) {
+                const denied = createSharedDeniedToolResult(
+                  definition.name,
+                  summary,
+                  "Permission denied by user or no approval handler was configured.",
+                );
+                options.onEvent?.({
+                  type: "tool_result",
+                  toolName: definition.name,
+                  summary: denied.summary,
+                  output: denied.output,
+                });
+                return denied.output;
+              }
+            }
+          }
+
+          options.onEvent?.({
+            type: "tool_start",
+            toolName: definition.name,
+            summary,
+          });
+
+          try {
+            const result = await executeToolCall(
+              {
+                name: definition.name,
+                callId,
+                argumentsText,
+              },
+              toolContext,
+            );
+            options.onEvent?.({
+              type: "tool_result",
+              toolName: definition.name,
+              summary: result.summary,
+              output: result.output,
+            });
+            return result.output;
+          } catch (error) {
+            if (options.signal?.aborted || isAbortError(error)) {
+              throw error;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            const failed = createSharedFailedToolResult(
+              definition.name,
+              summary,
+              message,
+            );
+            options.onEvent?.({
+              type: "tool_result",
+              toolName: definition.name,
+              summary: failed.summary,
+              output: failed.output,
+            });
+            return failed.output;
+          }
         },
       }),
     ]),
   );
 
   try {
+    options.onEvent?.({ type: "round_start", round: 1 });
     const result = await generateText({
       model,
       system: options.system,
@@ -353,6 +471,49 @@ export async function runSharedAgentTurn(
     }
     throw error;
   }
+}
+
+function createSharedDeniedToolResult(
+  toolName: string,
+  summary: string,
+  reason: string,
+): { output: string; summary: string } {
+  return {
+    output: JSON.stringify(
+      {
+        ok: false,
+        tool: toolName,
+        denied: true,
+        reason,
+      },
+      null,
+      2,
+    ),
+    summary: `Denied ${toolName} ${summary}`.trim(),
+  };
+}
+
+function createSharedFailedToolResult(
+  toolName: string,
+  summary: string,
+  error: string,
+): { output: string; summary: string } {
+  return {
+    output: JSON.stringify(
+      {
+        ok: false,
+        tool: toolName,
+        error,
+      },
+      null,
+      2,
+    ),
+    summary: `${toolName} ${summary} failed: ${error}`,
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 export async function listProviderModelOptions(
@@ -408,11 +569,16 @@ async function fetchOpenAiCompatibleModelOptions(
 async function fetchAnthropicModelOptions(
   context: ResolvedProviderContext,
 ): Promise<ProviderModelOption[]> {
+  const apiKey = context.apiKey;
+  if (!apiKey) {
+    throw new Error("An Anthropic API key is required to list models.");
+  }
+
   const payload = await fetchProviderJson<AnthropicModelListResponse>({
     url: resolveAnthropicModelsUrl(context.baseUrl),
     headers: {
       "anthropic-version": ANTHROPIC_API_VERSION,
-      "x-api-key": context.apiKey,
+      "x-api-key": apiKey,
     },
   });
 
@@ -428,12 +594,17 @@ async function fetchAnthropicModelOptions(
 async function fetchGeminiModelOptions(
   context: ResolvedProviderContext,
 ): Promise<ProviderModelOption[]> {
+  const apiKey = context.apiKey;
+  if (!apiKey) {
+    throw new Error("A Google API key is required to list models.");
+  }
+
   const modelsById = new Map<string, ProviderModelOption>();
   let pageToken: string | undefined;
 
   do {
     const url = new URL(`${DEFAULT_GEMINI_API_ROOT}/models`);
-    url.searchParams.set("key", context.apiKey);
+    url.searchParams.set("key", apiKey);
     url.searchParams.set("pageSize", "1000");
     if (pageToken) {
       url.searchParams.set("pageToken", pageToken);

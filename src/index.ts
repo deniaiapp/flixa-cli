@@ -3,6 +3,8 @@ import { Command } from "commander";
 import { registerLoginCommand } from "./commands/login.ts";
 import { registerClaudeCodeCommand } from "./commands/claude-code.ts";
 import { registerCodexCommand } from "./commands/codex.ts";
+import { registerShipCommand } from "./commands/ship.ts";
+import { registerShareCommand } from "./commands/share.ts";
 import { registerChatCommand } from "./commands/chat.ts";
 import { registerModelCommand } from "./commands/model.ts";
 import { registerUsageCommand } from "./commands/usage.ts";
@@ -24,5 +26,7 @@ registerUsageCommand(program);
 registerProvidersCommand(program);
 registerClaudeCodeCommand(program);
 registerCodexCommand(program);
+registerShipCommand(program);
+registerShareCommand(program);
 
 program.parseAsync(process.argv);

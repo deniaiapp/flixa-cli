@@ -9,6 +9,7 @@ import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { FunctionToolDefinition } from "../flixa/api.ts";
+import { assessCommandSafety } from "./policy.ts";
 
 const DEFAULT_BASH_TIMEOUT_MS = 30_000;
 const MAX_TOOL_OUTPUT_CHARS = 16_000;
@@ -243,6 +244,58 @@ export const AGENT_TOOLS: RegisteredTool[] = [
     },
     handler: async (args, context) => globTool(args, context),
   },
+  {
+    definition: {
+      type: "function",
+      name: "GitStatus",
+      description:
+        "Inspect the current git branch and working-tree status without changing files.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description: "Why git status is needed and why the read is safe.",
+          },
+        },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+    handler: async (_args, context) => gitStatusTool(context),
+  },
+  {
+    definition: {
+      type: "function",
+      name: "GitDiff",
+      description:
+        "Inspect the current git diff or diff stat without changing files.",
+      parameters: {
+        type: "object",
+        properties: {
+          staged: {
+            type: "boolean",
+            description: "Read the staged diff instead of the working-tree diff.",
+          },
+          stat_only: {
+            type: "boolean",
+            description: "Return only a compact diff stat.",
+          },
+          path: {
+            type: "string",
+            description: "Optional file path relative to the workspace root.",
+          },
+          reason: {
+            type: "string",
+            description: "Why the diff is needed and why the read is safe.",
+          },
+        },
+        required: ["reason"],
+        additionalProperties: false,
+      },
+    },
+    handler: async (args, context) => gitDiffTool(args, context),
+  },
 ];
 
 export function getAgentToolDefinitions(options?: {
@@ -308,8 +361,19 @@ async function runShellCommand(
   }
 
   const command = getRequiredString(args, "command");
+  const safety = assessCommandSafety(command);
+  if (!safety.allowed) {
+    throw new Error(`Command blocked: ${safety.reason}.`);
+  }
+
   const timeoutMs =
-    getOptionalInteger(args, "timeout_ms") ?? DEFAULT_BASH_TIMEOUT_MS;
+    Math.min(
+      300_000,
+      Math.max(
+        1_000,
+        getOptionalInteger(args, "timeout_ms") ?? DEFAULT_BASH_TIMEOUT_MS,
+      ),
+    );
 
   const { executable, executableArgs } = getShellInvocation(command);
 
@@ -530,6 +594,67 @@ async function globTool(
   return {
     output: JSON.stringify({ files: normalized }, null, 2),
     summary: `Glob listed ${normalized.length} files`,
+  };
+}
+
+async function gitStatusTool(
+  context: ToolExecutionContext,
+): Promise<ToolHandlerResult> {
+  const result = await runProcess("git", ["status", "--short", "--branch"], {
+    cwd: context.workspaceRoot,
+    timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
+  });
+
+  return {
+    output: JSON.stringify(
+      {
+        ok: result.exit_code === 0,
+        ...result,
+      },
+      null,
+      2,
+    ),
+    summary: "GitStatus inspected the working tree",
+  };
+}
+
+async function gitDiffTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext,
+): Promise<ToolHandlerResult> {
+  const commandArgs = ["diff", "--no-ext-diff", "--no-color"];
+  if (Boolean(args["staged"])) {
+    commandArgs.push("--cached");
+  }
+  if (Boolean(args["stat_only"])) {
+    commandArgs.push("--stat");
+  }
+
+  const pathValue = getOptionalString(args, "path");
+  if (pathValue) {
+    commandArgs.push("--", toWorkspaceRelative(resolveWorkspacePath(pathValue, context.workspaceRoot), context.workspaceRoot));
+  }
+
+  const result = await runProcess("git", commandArgs, {
+    cwd: context.workspaceRoot,
+    timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
+  });
+
+  return {
+    output: JSON.stringify(
+      {
+        ok: result.exit_code === 0,
+        staged: Boolean(args["staged"]),
+        stat_only: Boolean(args["stat_only"]),
+        path: pathValue ?? null,
+        ...result,
+      },
+      null,
+      2,
+    ),
+    summary: pathValue
+      ? `GitDiff inspected ${pathValue}`
+      : "GitDiff inspected the working tree",
   };
 }
 

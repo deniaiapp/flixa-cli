@@ -7,6 +7,7 @@ import { FLIXA_SESSIONS_DIR, enforcePrivateFile, ensurePrivateDir } from "../sec
 export interface StoredChatSession {
   id: string;
   cwd: string;
+  provider?: string;
   model: string;
   system?: string;
   autoMode?: boolean;
@@ -25,6 +26,7 @@ export function createSession(
   model: string,
   system?: string,
   modes?: {
+    provider?: string;
     autoMode?: boolean;
     yoloMode?: boolean;
     planMode?: boolean;
@@ -35,6 +37,7 @@ export function createSession(
   return {
     id: randomUUID(),
     cwd: resolve(cwdValue),
+    provider: modes?.provider,
     model,
     system,
     autoMode: modes?.autoMode ?? false,

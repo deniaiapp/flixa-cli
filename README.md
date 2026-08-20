@@ -99,6 +99,30 @@ flixa chat
 flixa chat --provider anthropic
 ```
 
+### Ship mode
+
+Run a complete coding mission from one prompt. Ship mode inspects the repo,
+implements the focused change, verifies it, and can produce a redacted Markdown
+card you can paste into a PR or share online.
+
+```sh
+flixa ship "Add a retry budget to the API client" --share
+flixa ship "Fix the failing login flow" --verify "bun run build" --share .flixa/ship-card.md
+flixa ship "Plan a migration to SQLite" --plan
+```
+
+By default, Ship uses guarded auto mode: file edits and shell commands are
+reviewed for safety, while deterministic destructive commands are blocked.
+Use `--interactive` for an approval prompt on every edit/command or `--yolo`
+only when you explicitly want to bypass those checks.
+
+Create a card from the latest saved session at any time:
+
+```sh
+flixa share
+flixa share --output .flixa/latest-card.md
+```
+
 ### Claude Code integration
 
 Configure Claude Code to use Flixa or Anthropic credentials.

@@ -433,7 +433,7 @@ function buildModelMessages(options: CreateResponseOptions): ModelMessage[] {
   }
 
   return options.input.map((item) => {
-    if ("type" in item && item.type === "function_call_output") {
+    if ("type" in item) {
       throw new Error(
         "function_call_output is not supported here. Resend the full conversation instead.",
       );
@@ -618,7 +618,7 @@ function extractModelDefinitions(payload: unknown): FlixaModelDefinition[] {
     throw new Error("Unexpected models response format.");
   }
 
-  const wrappedData = (payload as AnthropicCompatibleModelList).data;
+  const wrappedData = (payload as { data?: unknown }).data;
   if (!Array.isArray(wrappedData)) {
     throw new Error("Unexpected models response format.");
   }

@@ -110,7 +110,11 @@ async function promptForModelSelection(
     })),
   });
 
-  return models.find((model) => model.id === selectedId) ?? models[0];
+  const selectedModel = models.find((model) => model.id === selectedId) ?? models[0];
+  if (!selectedModel) {
+    throw new Error("No Flixa models are available.");
+  }
+  return selectedModel;
 }
 
 async function promptForProviderModelSelection(
@@ -131,7 +135,11 @@ async function promptForProviderModelSelection(
     })),
   });
 
-  return models.find((model) => model.id === selectedId) ?? models[0];
+  const selectedModel = models.find((model) => model.id === selectedId) ?? models[0];
+  if (!selectedModel) {
+    throw new Error(`No models are available for ${provider}.`);
+  }
+  return selectedModel;
 }
 
 function resolveRequestedProviderModel(

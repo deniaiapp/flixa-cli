@@ -46,6 +46,12 @@ import {
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
+import {
+  buildShareCard,
+  formatGitSnapshot,
+  readGitSnapshot,
+  writeShareCard,
+} from "../runs/share-card.ts";
 
 type InteractiveChatOptions = {
   provider?: string;
@@ -138,6 +144,13 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "/continue", description: "load latest session for this directory" },
   { name: "/resume", description: "resume a session by id or recent" },
   { name: "/init", description: "create or improve AGENTS.md for this repo" },
+  { name: "/ship", description: "run a guarded build mission", aliases: ["/run"] },
+  {
+    name: "/share",
+    description: "create a redacted share card from this session",
+    aliases: ["/recap"],
+  },
+  { name: "/diff", description: "show the current git diff summary" },
   { name: "/model", description: "switch model or open selector" },
   { name: "/usage", description: "show plan and quota usage" },
   { name: "/exit", description: "exit flixa cli", aliases: ["/quit"] },
@@ -317,6 +330,7 @@ function InteractiveChatApp({
     setSelectedModelIndex(0);
 
     const nextSession = createSession(cwdValue, currentModel, options.system, {
+      provider: options.provider,
       autoMode,
       yoloMode,
       planMode,
@@ -437,6 +451,33 @@ function InteractiveChatApp({
     [apiKey, currentModel, options.baseUrl, options.provider],
   );
 
+  const requestToolApproval = useCallback(
+    async (request: ToolApprovalRequest): Promise<boolean> => {
+      const signal = abortRef.current?.signal;
+      setPendingApproval(request);
+      setApprovalChoice("approve");
+      setStatus(`Approval required: ${request.toolName}`);
+
+      return await new Promise<boolean>((resolve, reject) => {
+        approvalResolveRef.current = resolve;
+        approvalRejectRef.current = reject;
+
+        const handleAbort = (): void => {
+          settleApprovalRequest({
+            error: createAbortError(),
+            nextStatus: "Request canceled",
+          });
+        };
+
+        signal?.addEventListener("abort", handleAbort, { once: true });
+        approvalCleanupRef.current = () => {
+          signal?.removeEventListener("abort", handleAbort);
+        };
+      });
+    },
+    [settleApprovalRequest],
+  );
+
   const sendPrompt = useCallback(
     async (prompt: string) => {
       const trimmedPrompt = prompt.trim();
@@ -487,37 +528,7 @@ function InteractiveChatApp({
             reviewToolSafety: yoloMode ? undefined : reviewToolSafety,
             requestToolApproval: yoloMode
               ? async () => true
-              : (request) => {
-                  setPendingApproval(request);
-                  setApprovalChoice("approve");
-                  setStatus(`Approval required: ${request.toolName}`);
-
-                  return new Promise<boolean>((resolve, reject) => {
-                    approvalResolveRef.current = resolve;
-                    approvalRejectRef.current = reject;
-
-                    const handleAbort = (): void => {
-                      settleApprovalRequest({
-                        error: createAbortError(),
-                        nextStatus: "Request canceled",
-                      });
-                    };
-
-                    abortController.signal.addEventListener(
-                      "abort",
-                      handleAbort,
-                      {
-                        once: true,
-                      },
-                    );
-                    approvalCleanupRef.current = () => {
-                      abortController.signal.removeEventListener(
-                        "abort",
-                        handleAbort,
-                      );
-                    };
-                  });
-                },
+              : requestToolApproval,
             onEvent: (event) => {
               if (event.type === "tool_start") {
                 setStatus(`Running ${event.toolName}…`);
@@ -552,6 +563,7 @@ function InteractiveChatApp({
           setConversation(result.history);
           const nextSession = {
             ...activeSession,
+            provider: providerContext.provider,
             history: result.history,
             model: currentModel,
             system: turnSystemPrompt,
@@ -576,6 +588,19 @@ function InteractiveChatApp({
             signal: abortController.signal,
             autoMode,
             planMode,
+            yoloMode,
+            acceptEdits,
+            reviewToolSafety: yoloMode ? undefined : reviewToolSafety,
+            requestToolApproval: yoloMode
+              ? async () => true
+              : requestToolApproval,
+            onEvent: (event) => {
+              if (event.type === "tool_start") {
+                setStatus(`Running ${event.toolName}…`);
+              } else if (event.type === "tool_result") {
+                appendSystemMessage(event.summary);
+              }
+            },
           });
 
           const displayText = result.text.trim();
@@ -592,6 +617,7 @@ function InteractiveChatApp({
           setConversation(result.history);
           const nextSession = {
             ...activeSession,
+            provider: result.context.provider,
             history: result.history,
             model: result.context.model,
             system: turnSystemPrompt,
@@ -640,6 +666,7 @@ function InteractiveChatApp({
       acceptEdits,
       activeSession,
       reviewToolSafety,
+      requestToolApproval,
       settleApprovalRequest,
     ],
   );
@@ -913,6 +940,51 @@ function InteractiveChatApp({
     [activeSession, persistSessionModes],
   );
 
+  const shareCurrentSession = useCallback(
+    (outputPath?: string) => {
+      const lastUserPrompt = [...activeSession.history]
+        .reverse()
+        .find((message) => message.role === "user")?.content;
+      const lastAssistantText = [...activeSession.history]
+        .reverse()
+        .find((message) => message.role === "assistant")?.content;
+      const card = buildShareCard({
+        workspaceRoot: cwdValue,
+        prompt: lastUserPrompt || "Flixa coding session",
+        provider: activeSession.provider || options.provider || "flixa",
+        model: activeSession.model || currentModel,
+        finalText: lastAssistantText || "No assistant result yet.",
+        startedAt: activeSession.createdAt,
+        endedAt: activeSession.updatedAt,
+        sessionId: activeSession.id,
+        planMode,
+      });
+
+      if (outputPath) {
+        const resolvedPath = writeShareCard(card, outputPath, cwdValue);
+        appendSystemMessage(`Share card saved to ${resolvedPath}`);
+      } else {
+        appendSystemMessage(card);
+      }
+      setInput("");
+      setStatus(outputPath ? "Share card saved" : "Share card ready");
+    },
+    [
+      activeSession,
+      appendSystemMessage,
+      currentModel,
+      cwdValue,
+      options.provider,
+      planMode,
+    ],
+  );
+
+  const showGitDiff = useCallback(() => {
+    appendSystemMessage(formatGitSnapshot(readGitSnapshot(cwdValue)));
+    setInput("");
+    setStatus("Git status refreshed");
+  }, [appendSystemMessage, cwdValue]);
+
   const handleCommand = useCallback(
     async (value: string) => {
       let trimmed = value.trim();
@@ -975,6 +1047,42 @@ function InteractiveChatApp({
         return;
       }
 
+      if (trimmed === "/diff") {
+        showGitDiff();
+        return;
+      }
+
+      if (trimmed === "/share" || trimmed === "/recap") {
+        shareCurrentSession();
+        return;
+      }
+
+      if (trimmed.startsWith("/share ") || trimmed.startsWith("/recap ")) {
+        const outputPath = trimmed.slice(trimmed.indexOf(" ") + 1).trim();
+        if (!outputPath) {
+          appendSystemMessage("Usage: /share [output-path]");
+        } else {
+          shareCurrentSession(outputPath);
+        }
+        return;
+      }
+
+      if (trimmed === "/ship" || trimmed === "/run") {
+        appendSystemMessage("Usage: /ship <task>");
+        setInput("");
+        return;
+      }
+
+      if (trimmed.startsWith("/ship ") || trimmed.startsWith("/run ")) {
+        const task = trimmed.slice(trimmed.indexOf(" ") + 1).trim();
+        if (!task) {
+          appendSystemMessage("Usage: /ship <task>");
+        } else {
+          await sendPrompt(buildShipPrompt(task));
+        }
+        return;
+      }
+
       if (trimmed === "/model") {
         await openModelSelector();
         return;
@@ -1023,6 +1131,8 @@ function InteractiveChatApp({
       options.system,
       resumeIntoSession,
       showUsage,
+      showGitDiff,
+      shareCurrentSession,
       startFreshConversation,
       sendPrompt,
       applyModelSelection,
@@ -1522,7 +1632,7 @@ function ModelSelector({
   models,
   selectedIndex,
 }: {
-  models: readonly Array<FlixaModelDefinition | ProviderModelOption>;
+  models: ReadonlyArray<FlixaModelDefinition | ProviderModelOption>;
   selectedIndex: number;
 }): React.JSX.Element {
   const visibleStartIndex = Math.max(
@@ -1852,7 +1962,7 @@ function tokenizeSearchText(value: string): string[] {
 
 function renderSystemLine(line: string, index: number): React.JSX.Element {
   const toolSummaryMatch = line.match(
-    /^(Bash|Read|Write|Edit|Grep|Glob)\b(?:\s+(.*))?$/,
+    /^(Bash|Read|Write|Edit|Grep|Glob|GitStatus|GitDiff)\b(?:\s+(.*))?$/,
   );
   if (toolSummaryMatch) {
     const toolName = toolSummaryMatch[1] ?? "";
@@ -1997,7 +2107,7 @@ function getNextFooterMode(currentMode: FooterModeKey | null): FooterModeKey {
 }
 
 function findModelSelectionIndex(
-  models: readonly Array<FlixaModelDefinition | ProviderModelOption>,
+  models: ReadonlyArray<FlixaModelDefinition | ProviderModelOption>,
   currentModel: string,
 ): number {
   const exactIndex = models.findIndex((model) => model.id === currentModel);
@@ -2042,8 +2152,22 @@ function buildHelpMessage(): string {
     "  /continue             load the latest session for this directory",
     "  /resume [sessionId]   resume a saved session",
     "  /init                 create or improve AGENTS.md for this repo",
+    "  /ship <task>          run an inspect -> edit -> verify mission",
+    "  /diff                 show the current git diff summary",
+    "  /share [path]         create a redacted share card",
     "  /model [id]           open model selector or switch model",
     "  /usage                show plan and quota usage",
     "  /exit, /quit          exit Flixa CLI",
+  ].join("\n");
+}
+
+function buildShipPrompt(task: string): string {
+  return [
+    "Ship this task end-to-end in the current repository.",
+    "Inspect the relevant code first, make the smallest focused implementation, and run the most relevant verification before you finish.",
+    "Use GitStatus/GitDiff before the final response when available.",
+    "Final response format: SHIPPED or NOT SHIPPED, summary, files changed, verification, and any follow-up.",
+    "",
+    `Task: ${task}`,
   ].join("\n");
 }
