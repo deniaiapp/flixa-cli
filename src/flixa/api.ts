@@ -23,7 +23,7 @@ export const DEFAULT_FLIXA_BASE_URL =
 export const DEFAULT_FLIXA_MODEL =
   process.env.FLIXA_MODEL?.trim() ||
   process.env.OPENAI_MODEL?.trim() ||
-  "openai/gpt-5.4";
+  "openai/gpt-5.6-sol";
 
 export interface ChatMessage {
   role: "user" | "assistant";

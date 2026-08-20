@@ -22,6 +22,8 @@
     "dev": "bun run src/index.ts",
     "start": "bun run src/index.ts",
     "providers:update": "node scripts/update-models-dev.mjs",
+    "openclaw:check": "node scripts/verify-openclaw-integration.mjs",
+    "check": "bunx tsc --noEmit && bun run build && bun run openclaw:check",
     "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
   },
   "devDependencies": {

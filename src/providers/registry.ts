@@ -34,7 +34,7 @@ const BUILTIN_PROVIDERS: Record<string, ProviderDefinition> = {
     authType: "device",
     runtime: "flixa",
     defaultBaseUrl: "https://api.flixa.engineer/v1/agent",
-    defaultModel: "openai/gpt-5.4",
+    defaultModel: "openai/gpt-5.6-sol",
     source: "builtin",
     claudeCodeEnv: {
       apiKeyEnv: "ANTHROPIC_API_KEY",

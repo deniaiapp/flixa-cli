@@ -140,6 +140,19 @@ clipboard automatically and the terminal renders a rich preview. If the
 platform has no clipboard utility, the preview still works and the command
 reports that copying was unavailable.
 
+### OpenClaw integration
+
+The first OpenClaw integration is available under
+`integrations/openclaw-flixa`. It registers Flixa as an OpenClaw CLI backend,
+so OpenClaw owns channels, pairing, and Gateway sessions while Flixa owns the
+coding loop and permissions.
+
+```sh
+cd integrations/openclaw-flixa
+npm install
+npm run build
+```
+
 ### Claude Code integration
 
 Configure Claude Code to use Flixa or Anthropic credentials.

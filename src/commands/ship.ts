@@ -284,6 +284,7 @@ async function runShipCommand(
           model,
           session_id: savedSession.id,
           output_text: finalText,
+          text: finalText,
           verification: verification || null,
           share_path: sharePath || null,
           copied_to_clipboard: clipboard?.copied || false,
