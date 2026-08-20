@@ -38,6 +38,86 @@ export interface ShareCardInput {
   verification?: VerificationEvidence;
 }
 
+export interface ClipboardCopyResult {
+  copied: boolean;
+  method?: string;
+  reason?: string;
+}
+
+export function copyToClipboard(value: string): ClipboardCopyResult {
+  const candidates =
+    process.platform === "win32"
+      ? [
+          {
+            command: "pwsh",
+            args: [
+              "-NoLogo",
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              "$value = [Console]::In.ReadToEnd(); Set-Clipboard -Value $value",
+            ],
+            method: "PowerShell clipboard",
+          },
+          {
+            command: "powershell",
+            args: [
+              "-NoLogo",
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              "$value = [Console]::In.ReadToEnd(); Set-Clipboard -Value $value",
+            ],
+            method: "PowerShell clipboard",
+          },
+        ]
+      : process.platform === "darwin"
+        ? [
+            {
+              command: "pbcopy",
+              args: [],
+              method: "pbcopy",
+            },
+          ]
+        : [
+            { command: "wl-copy", args: [], method: "wl-copy" },
+            {
+              command: "xclip",
+              args: ["-selection", "clipboard"],
+              method: "xclip",
+            },
+            {
+              command: "xsel",
+              args: ["--clipboard", "--input"],
+              method: "xsel",
+            },
+          ];
+
+  let lastReason = "No supported clipboard command was found.";
+  for (const candidate of candidates) {
+    try {
+      const result = spawnSync(candidate.command, candidate.args, {
+        input: value,
+        encoding: "utf-8",
+        windowsHide: true,
+        timeout: 2_000,
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+      if (result.status === 0 && !result.error) {
+        return { copied: true, method: candidate.method };
+      }
+
+      const errorOutput =
+        typeof result.stderr === "string" ? result.stderr.trim() : "";
+      lastReason = errorOutput || `${candidate.command} exited with status ${result.status ?? "unknown"}.`;
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return { copied: false, reason: lastReason };
+}
+
 export function readGitSnapshot(workspaceRoot: string): GitSnapshot {
   const statusResult = runGit(workspaceRoot, ["status", "--short", "--branch"]);
   if (statusResult.exitCode !== 0) {

@@ -32,9 +32,11 @@ import {
 } from "../sessions/store.ts";
 import {
   buildShareCard,
+  copyToClipboard,
   writeShareCard,
   type VerificationEvidence,
 } from "../runs/share-card.ts";
+import { renderShareCard } from "../ui/share-card.ts";
 
 type ShipOptions = {
   provider?: string;
@@ -271,6 +273,7 @@ async function runShipCommand(
   if (typeof options.share === "string" && shareCard) {
     sharePath = writeShareCard(shareCard, options.share, workspaceRoot);
   }
+  const clipboard = shareCard ? copyToClipboard(shareCard) : undefined;
 
   if (options.json) {
     console.log(
@@ -283,6 +286,8 @@ async function runShipCommand(
           output_text: finalText,
           verification: verification || null,
           share_path: sharePath || null,
+          copied_to_clipboard: clipboard?.copied || false,
+          clipboard_method: clipboard?.method || null,
           share_card: sharePath ? null : shareCard || null,
         },
         null,
@@ -304,7 +309,12 @@ async function runShipCommand(
     if (sharePath) {
       console.log(chalk.green(`\n✓ Share card saved to ${sharePath}`));
     } else if (shareCard) {
-      console.log(`\n${shareCard}`);
+      console.log(`\n${renderShareCard(shareCard)}`);
+    }
+    if (clipboard?.copied) {
+      console.log(chalk.green(`\n✓ Share card copied to clipboard (${clipboard.method})`));
+    } else if (shareCard) {
+      console.log(chalk.dim(`\nClipboard unavailable: ${clipboard?.reason}`));
     }
   }
 

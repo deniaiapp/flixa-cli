@@ -48,6 +48,7 @@ import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
 import {
   buildShareCard,
+  copyToClipboard,
   formatGitSnapshot,
   readGitSnapshot,
   writeShareCard,
@@ -76,7 +77,7 @@ type InteractiveChatAppProps = {
 
 type UiMessage = {
   id: string;
-  role: "user" | "assistant" | "system" | "header" | "thinking";
+  role: "user" | "assistant" | "system" | "header" | "thinking" | "card";
   content: string;
   pending?: boolean;
 };
@@ -959,15 +960,32 @@ function InteractiveChatApp({
         sessionId: activeSession.id,
         planMode,
       });
+      const clipboard = copyToClipboard(card);
 
       if (outputPath) {
         const resolvedPath = writeShareCard(card, outputPath, cwdValue);
         appendSystemMessage(`Share card saved to ${resolvedPath}`);
       } else {
-        appendSystemMessage(card);
+        setMessages((prev) => [
+          ...prev,
+          { id: randomUUID(), role: "card", content: card },
+        ]);
+      }
+      if (clipboard.copied) {
+        appendSystemMessage(`Share card copied to clipboard (${clipboard.method}).`);
+      } else {
+        appendSystemMessage(`Clipboard unavailable: ${clipboard.reason}`);
       }
       setInput("");
-      setStatus(outputPath ? "Share card saved" : "Share card ready");
+      setStatus(
+        outputPath
+          ? clipboard.copied
+            ? "Share card saved and copied"
+            : "Share card saved"
+          : clipboard.copied
+            ? "Share card copied"
+            : "Share card ready",
+      );
     },
     [
       activeSession,
@@ -1449,6 +1467,25 @@ function MessageRow({ message }: { message: UiMessage }): React.JSX.Element {
         {renderedLines.map((line, index) => (
           <Text key={index} color={COLORS.dim} wrap="wrap">
             {line}
+          </Text>
+        ))}
+      </Box>
+    );
+  }
+
+  if (message.role === "card") {
+    const renderedLines = renderMarkdownToLines(message.content);
+    return (
+      <Box
+        borderStyle="round"
+        borderColor={COLORS.brand}
+        flexDirection="column"
+        paddingX={1}
+        marginBottom={1}
+      >
+        {renderedLines.map((line, index) => (
+          <Text key={index} wrap="wrap">
+            {line || " "}
           </Text>
         ))}
       </Box>

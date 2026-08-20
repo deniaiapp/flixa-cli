@@ -4,8 +4,10 @@ import type { Command } from "commander";
 import { getDefaultProvider } from "../config/store.ts";
 import {
   buildShareCard,
+  copyToClipboard,
   writeShareCard,
 } from "../runs/share-card.ts";
+import { renderShareCard } from "../ui/share-card.ts";
 import {
   loadLatestSessionForCwd,
   loadSessionById,
@@ -67,6 +69,7 @@ export function registerShareCommand(program: Command): void {
           session.cwd || cwd(),
         );
       }
+      const clipboard = copyToClipboard(card);
 
       if (resolvedOptions.json) {
         console.log(
@@ -76,6 +79,8 @@ export function registerShareCommand(program: Command): void {
               provider: session.provider || getDefaultProvider(),
               model: session.model,
               output_path: outputPath || null,
+              copied_to_clipboard: clipboard.copied,
+              clipboard_method: clipboard.method || null,
               card,
             },
             null,
@@ -88,7 +93,12 @@ export function registerShareCommand(program: Command): void {
       if (outputPath) {
         console.log(chalk.green(`✓ Share card saved to ${outputPath}`));
       } else {
-        console.log(card);
+        console.log(renderShareCard(card));
+      }
+      if (clipboard.copied) {
+        console.log(chalk.green(`✓ Share card copied to clipboard (${clipboard.method})`));
+      } else {
+        console.log(chalk.dim(`Clipboard unavailable: ${clipboard.reason}`));
       }
     });
 }

@@ -135,6 +135,11 @@ flixa share
 flixa share --output .flixa/latest-card.md
 ```
 
+When a card is generated, its Markdown source is copied to the system
+clipboard automatically and the terminal renders a rich preview. If the
+platform has no clipboard utility, the preview still works and the command
+reports that copying was unavailable.
+
 ### Claude Code integration
 
 Configure Claude Code to use Flixa or Anthropic credentials.
