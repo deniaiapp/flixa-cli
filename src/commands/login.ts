@@ -3,12 +3,7 @@ import open from "open";
 import { input, password, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import boxen from "boxen";
-import {
-  deleteCredentials,
-  getApiKey,
-  loginWithDeviceAuth,
-  saveApiKey,
-} from "../auth/service.ts";
+import { deleteCredentials, getApiKey, loginWithDeviceAuth, saveApiKey } from "../auth/service.ts";
 import {
   getPersistedProviderBaseUrl,
   setDefaultProvider,
@@ -85,7 +80,9 @@ export function registerLoginCommand(program: Command): void {
       }
 
       console.log(
-        chalk.dim("Claude Code settings are not changed by logout. Run `flixa claude-code` again if you want to point Claude Code at a different provider."),
+        chalk.dim(
+          "Claude Code settings are not changed by logout. Run `flixa claude-code` again if you want to point Claude Code at a different provider.",
+        ),
       );
     });
 }
@@ -152,13 +149,15 @@ async function runDeviceAuthLogin(provider: ProviderId): Promise<void> {
             padding: 1,
             borderColor: "cyan",
             borderStyle: "round",
-          }
+          },
         );
         console.log(box);
 
         if (openStyle === "auto") {
           open(verificationUrl).catch(() => {
-            console.log(chalk.yellow("Could not open browser.") + " Please visit the URL above manually.");
+            console.log(
+              chalk.yellow("Could not open browser.") + " Please visit the URL above manually.",
+            );
           });
         }
 
@@ -177,10 +176,12 @@ async function runDeviceAuthLogin(provider: ProviderId): Promise<void> {
 
 async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Promise<void> {
   const providerDefinition = getProviderDefinition(provider);
-  const apiKey = (await password({
-    message: `${providerDefinition.displayName} API key`,
-    mask: "*",
-  })).trim();
+  const apiKey = (
+    await password({
+      message: `${providerDefinition.displayName} API key`,
+      mask: "*",
+    })
+  ).trim();
 
   if (!apiKey) {
     console.error(chalk.red("✗ Login failed:") + " API key cannot be empty.");
@@ -195,20 +196,22 @@ async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Pro
     provider === "custom-openai"
   ) {
     const persistedBaseUrl = getPersistedProviderBaseUrl(provider);
-    const baseUrl = (baseUrlOption ?? (await input({
+    const baseUrl = (
+      baseUrlOption ??
+      (await input({
         message:
           provider === "custom-openai"
-          ? "Base URL for your OpenAI-compatible endpoint"
-          : `Base URL for ${providerDefinition.displayName} (leave blank to use default)`,
-      default: persistedBaseUrl ?? providerDefinition.defaultBaseUrl ?? "",
-    }))).trim();
+            ? "Base URL for your OpenAI-compatible endpoint"
+            : `Base URL for ${providerDefinition.displayName} (leave blank to use default)`,
+        default: persistedBaseUrl ?? providerDefinition.defaultBaseUrl ?? "",
+      }))
+    ).trim();
 
     if (baseUrl) {
       setPersistedProviderBaseUrl(provider, baseUrl);
     } else if (providerDefinition.baseUrlRequired || provider === "custom-openai") {
       console.error(
-        chalk.red("✗ Login failed:") +
-          ` ${providerDefinition.displayName} requires a base URL.`,
+        chalk.red("✗ Login failed:") + ` ${providerDefinition.displayName} requires a base URL.`,
       );
       process.exit(1);
     }
@@ -219,14 +222,11 @@ async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Pro
 
 function runEnvironmentLogin(provider: ProviderId): void {
   const definition = getProviderDefinition(provider);
-  const variables =
-    definition.environmentVariables ?? definition.apiKeyEnvNames ?? [];
+  const variables = definition.environmentVariables ?? definition.apiKeyEnvNames ?? [];
   const configured = variables.filter((name) => process.env[name]?.trim());
   const missing = variables.filter((name) => !process.env[name]?.trim());
 
-  console.log(
-    chalk.cyan(`\n${definition.displayName} uses environment-based authentication.`),
-  );
+  console.log(chalk.cyan(`\n${definition.displayName} uses environment-based authentication.`));
   if (variables.length > 0) {
     console.log(chalk.dim(`  Required variables: ${variables.join(", ")}`));
   }
@@ -237,7 +237,9 @@ function runEnvironmentLogin(provider: ProviderId): void {
     console.log(chalk.yellow(`  Missing: ${missing.join(", ")}`));
   }
   if (definition.baseUrlRequired) {
-    console.log(chalk.dim("  Pass --base-url when the provider endpoint is not discoverable automatically."));
+    console.log(
+      chalk.dim("  Pass --base-url when the provider endpoint is not discoverable automatically."),
+    );
   }
 }
 

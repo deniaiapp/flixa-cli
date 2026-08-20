@@ -91,9 +91,7 @@ export function loadSessionById(sessionId: string): StoredChatSession | null {
   }
 }
 
-export function loadLatestSessionForCwd(
-  cwdValue: string,
-): StoredChatSession | null {
+export function loadLatestSessionForCwd(cwdValue: string): StoredChatSession | null {
   const target = resolve(cwdValue);
   return listRecentSessions(100).find((session) => session.cwd === target) ?? null;
 }
@@ -156,15 +154,14 @@ function findSessionPathById(sessionId: string): string | null {
 }
 
 function listSessionFilePaths(dirPath: string): string[] {
-  return readdirSync(dirPath)
-    .flatMap((entry) => {
-      const entryPath = join(dirPath, entry);
-      const stats = statSync(entryPath);
-      if (stats.isDirectory()) {
-        return listSessionFilePaths(entryPath);
-      }
-      return entry.endsWith(".json") ? [entryPath] : [];
-    });
+  return readdirSync(dirPath).flatMap((entry) => {
+    const entryPath = join(dirPath, entry);
+    const stats = statSync(entryPath);
+    if (stats.isDirectory()) {
+      return listSessionFilePaths(entryPath);
+    }
+    return entry.endsWith(".json") ? [entryPath] : [];
+  });
 }
 
 function loadSessionFromPath(sessionPath: string): StoredChatSession | null {

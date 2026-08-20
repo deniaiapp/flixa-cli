@@ -2,11 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 
-const INSTRUCTION_CANDIDATES = [
-  "CLAUDE.md",
-  "AGENTS.md",
-  join(".claude", "CLAUDE.md"),
-] as const;
+const INSTRUCTION_CANDIDATES = ["CLAUDE.md", "AGENTS.md", join(".claude", "CLAUDE.md")] as const;
 
 type LoadedInstructionFile = {
   path: string;
@@ -87,18 +83,14 @@ function loadInstructionFiles(cwdValue: string): LoadedInstructionFile[] {
   return loaded;
 }
 
-function formatInstructionFiles(
-  files: readonly LoadedInstructionFile[],
-): string | undefined {
+function formatInstructionFiles(files: readonly LoadedInstructionFile[]): string | undefined {
   if (files.length === 0) {
     return undefined;
   }
 
   return [
     "The following repository instruction files were loaded from the current directory hierarchy. Apply them in order, with later files being more specific.",
-    ...files.map(
-      (file) => `\n[Instructions: ${file.path}]\n${file.content}`,
-    ),
+    ...files.map((file) => `\n[Instructions: ${file.path}]\n${file.content}`),
   ].join("\n");
 }
 
@@ -108,8 +100,7 @@ function formatGitContext(cwdValue: string): string | undefined {
     return undefined;
   }
 
-  const branch =
-    readGitOutput(cwdValue, ["branch", "--show-current"]) || "(detached HEAD)";
+  const branch = readGitOutput(cwdValue, ["branch", "--show-current"]) || "(detached HEAD)";
   const status = truncateForPrompt(
     readGitOutput(cwdValue, ["status", "--short"]) || "(clean)",
     2_000,
@@ -128,9 +119,7 @@ function formatGitContext(cwdValue: string): string | undefined {
   ].join("\n\n");
 }
 
-function formatCommitWorkflowInstructions(
-  latestUserPrompt?: string,
-): string | undefined {
+function formatCommitWorkflowInstructions(latestUserPrompt?: string): string | undefined {
   if (!looksLikeCommitRequest(latestUserPrompt)) {
     return undefined;
   }
@@ -154,9 +143,7 @@ function looksLikeCommitRequest(prompt?: string): boolean {
     return false;
   }
 
-  return /\bgit\s+commit\b|\bcommit(?:ting|ted|s)?\b|コミット/i.test(
-    normalized,
-  );
+  return /\bgit\s+commit\b|\bcommit(?:ting|ted|s)?\b|コミット/i.test(normalized);
 }
 
 function readGitOutput(cwdValue: string, args: string[]): string | undefined {

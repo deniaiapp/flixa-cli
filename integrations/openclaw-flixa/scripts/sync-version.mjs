@@ -9,8 +9,7 @@ const pluginPackagePath = join(integrationRoot, "package.json");
 
 const rootPackage = readJson(rootPackagePath);
 const pluginPackage = readJson(pluginPackagePath);
-const releaseVersion =
-  process.env.FLIXA_RELEASE_VERSION?.trim() || rootPackage.version;
+const releaseVersion = process.env.FLIXA_RELEASE_VERSION?.trim() || rootPackage.version;
 
 if (typeof releaseVersion !== "string" || !releaseVersion) {
   throw new Error("The Flixa CLI package has no usable version.");

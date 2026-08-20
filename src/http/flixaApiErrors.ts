@@ -3,10 +3,8 @@ import { getFlixaCliClientHeaders } from "./flixaClientHeaders.ts";
 
 const SERVICE_UNAVAILABLE_FALLBACK =
   "Deni AI Flixa is currently unavailable. Please contact us at contact@deniai.app.";
-const CLIENT_UPDATE_REQUIRED_FALLBACK =
-  "Please update your Deni AI Flixa to continue.";
-const INVALID_KEY_FALLBACK =
-  "API key is invalid or expired. Run `flixa login` to re-authenticate.";
+const CLIENT_UPDATE_REQUIRED_FALLBACK = "Please update your Deni AI Flixa to continue.";
+const INVALID_KEY_FALLBACK = "API key is invalid or expired. Run `flixa login` to re-authenticate.";
 
 export type FlixaPublicErrorCode =
   | "service_unavailable"
@@ -19,9 +17,7 @@ export type FlixaPublicErrorCode =
  * Format a failed Flixa HTTP response for CLI display.
  * Maps abuse / ban / update codes to stable user-facing copy.
  */
-export async function formatFlixaHttpError(
-  response: Response,
-): Promise<string> {
+export async function formatFlixaHttpError(response: Response): Promise<string> {
   const statusLine = `Flixa API request failed: ${response.status} ${response.statusText}`;
   let payload: unknown = null;
   let rawText = "";
@@ -129,23 +125,20 @@ function mapFlixaErrorPayload(options: {
     );
   }
 
-  if (
-    options.status === 401 &&
-    (code === "invalid_key" || code === "expired_key")
-  ) {
+  if (options.status === 401 && (code === "invalid_key" || code === "expired_key")) {
     return message?.trim() || INVALID_KEY_FALLBACK;
   }
 
   // Some gateways only put the public code in the body without a nested error object.
   if (options.status === 403 && !code) {
     const lowered = `${message ?? ""}\n${options.rawText}`.toLowerCase();
-    if (lowered.includes("client_update_required") || lowered.includes("update your deni ai flixa")) {
+    if (
+      lowered.includes("client_update_required") ||
+      lowered.includes("update your deni ai flixa")
+    ) {
       return message?.trim() || CLIENT_UPDATE_REQUIRED_FALLBACK;
     }
-    if (
-      lowered.includes("service_unavailable") ||
-      lowered.includes("currently unavailable")
-    ) {
+    if (lowered.includes("service_unavailable") || lowered.includes("currently unavailable")) {
       logClientSignalSelfCheck();
       return message?.trim() || SERVICE_UNAVAILABLE_FALLBACK;
     }

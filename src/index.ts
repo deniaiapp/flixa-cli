@@ -13,11 +13,7 @@ import { CLI_VERSION } from "./version.ts";
 
 const program = new Command();
 
-program
-  .name("flixa")
-  .description("Flixa CLI")
-  .showHelpAfterError()
-  .version(CLI_VERSION);
+program.name("flixa").description("Flixa CLI").showHelpAfterError().version(CLI_VERSION);
 
 registerChatCommand(program);
 registerLoginCommand(program);

@@ -2,11 +2,7 @@ import chalk from "chalk";
 import { select } from "@inquirer/prompts";
 import { cwd } from "node:process";
 import type { Command } from "commander";
-import {
-  createResponse,
-  extractOutputText,
-  type ChatMessage,
-} from "../flixa/api.ts";
+import { createResponse, extractOutputText, type ChatMessage } from "../flixa/api.ts";
 import {
   generateProviderText,
   resolveProviderContext,
@@ -19,10 +15,7 @@ import {
   type ToolApprovalRequest,
   type ToolSafetyReviewResult,
 } from "../agent-tools/runner.ts";
-import {
-  executeToolCall,
-  type ToolExecutionContext,
-} from "../agent-tools/tools.ts";
+import { executeToolCall, type ToolExecutionContext } from "../agent-tools/tools.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import {
   createSession,
@@ -72,36 +65,21 @@ export function registerShipCommand(program: Command): void {
     .option("--base-url <url>", "Override the provider API base URL")
     .option("--max-output-tokens <tokens>", "Limit response tokens")
     .option("--plan", "Inspect and propose a plan without editing")
-    .option(
-      "--interactive",
-      "Ask for approval before each shell command or file edit",
-    )
+    .option("--interactive", "Ask for approval before each shell command or file edit")
     .option("--yolo", "Skip approvals and safety review for this run")
     .option("-c, --continue", "Continue the latest session in this directory")
     .option("--verify <command>", "Run one explicit verification command afterward")
-    .option(
-      "--share [path]",
-      "Print a redacted share card, or write it to a Markdown path",
-    )
+    .option("--share [path]", "Print a redacted share card, or write it to a Markdown path")
     .option("--json", "Print machine-readable output")
-    .action(
-      async (
-        promptParts: string[],
-        options: ShipOptions,
-        command: Command,
-      ) => {
-        await runShipCommand(promptParts, {
-          ...(command.parent?.opts?.() as Partial<ShipOptions> | undefined),
-          ...options,
-        });
-      },
-    );
+    .action(async (promptParts: string[], options: ShipOptions, command: Command) => {
+      await runShipCommand(promptParts, {
+        ...(command.parent?.opts?.() as Partial<ShipOptions> | undefined),
+        ...options,
+      });
+    });
 }
 
-async function runShipCommand(
-  promptParts: string[],
-  options: ShipOptions,
-): Promise<void> {
+async function runShipCommand(promptParts: string[], options: ShipOptions): Promise<void> {
   if (options.plan && options.yolo) {
     throw new Error("--plan and --yolo cannot be used together.");
   }
@@ -124,9 +102,7 @@ async function runShipCommand(
 
   const maxOutputTokens = parseMaxOutputTokens(options.maxOutputTokens);
   const workspaceRoot = cwd();
-  const session = options.continue
-    ? loadLatestSessionForCwd(workspaceRoot)
-    : null;
+  const session = options.continue ? loadLatestSessionForCwd(workspaceRoot) : null;
   const activeSession =
     session ||
     createSession(workspaceRoot, providerContext.model, undefined, {
@@ -157,9 +133,7 @@ async function runShipCommand(
   }
 
   const reviewToolSafety = createToolSafetyReviewer(providerContext);
-  const requestToolApproval = options.interactive
-    ? promptForToolApproval
-    : undefined;
+  const requestToolApproval = options.interactive ? promptForToolApproval : undefined;
   const onEvent = options.json
     ? undefined
     : (event: AgentRunEvent | SharedAgentRunEvent): void => {
@@ -172,9 +146,7 @@ async function runShipCommand(
           return;
         }
         if (event.type === "tool_result") {
-          const color = event.summary.startsWith("Denied ")
-            ? chalk.yellow
-            : chalk.dim;
+          const color = event.summary.startsWith("Denied ") ? chalk.yellow : chalk.dim;
           console.log(color(`  ${event.summary}`));
         }
       };
@@ -198,12 +170,8 @@ async function runShipCommand(
       planMode: Boolean(options.plan),
       acceptEdits: false,
       reviewToolSafety:
-        options.plan || options.interactive || options.yolo
-          ? undefined
-          : reviewToolSafety,
-      requestToolApproval: options.yolo
-        ? allowAllToolApprovals
-        : requestToolApproval,
+        options.plan || options.interactive || options.yolo ? undefined : reviewToolSafety,
+      requestToolApproval: options.yolo ? allowAllToolApprovals : requestToolApproval,
       onEvent,
     });
     finalText = result.finalText.trim();
@@ -222,12 +190,8 @@ async function runShipCommand(
       planMode: Boolean(options.plan),
       acceptEdits: false,
       reviewToolSafety:
-        options.plan || options.interactive || options.yolo
-          ? undefined
-          : reviewToolSafety,
-      requestToolApproval: options.yolo
-        ? allowAllToolApprovals
-        : requestToolApproval,
+        options.plan || options.interactive || options.yolo ? undefined : reviewToolSafety,
+      requestToolApproval: options.yolo ? allowAllToolApprovals : requestToolApproval,
       onEvent,
     });
     finalText = result.text.trim();
@@ -375,9 +339,7 @@ function createToolSafetyReviewer(
   };
 }
 
-async function promptForToolApproval(
-  request: ToolApprovalRequest,
-): Promise<boolean> {
+async function promptForToolApproval(request: ToolApprovalRequest): Promise<boolean> {
   return select({
     message: `${request.title}\n${request.reason}\n${request.toolName}: ${request.summary}${request.details.length ? `\n${request.details.join("\n")}` : ""}`,
     choices: [
@@ -387,9 +349,7 @@ async function promptForToolApproval(
   });
 }
 
-async function allowAllToolApprovals(
-  _request: ToolApprovalRequest,
-): Promise<boolean> {
+async function allowAllToolApprovals(_request: ToolApprovalRequest): Promise<boolean> {
   return true;
 }
 

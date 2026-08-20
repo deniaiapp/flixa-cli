@@ -6,11 +6,7 @@ import {
   type ChatMessage,
   type FlixaResponse,
 } from "../flixa/api.ts";
-import {
-  executeToolCall,
-  getAgentToolDefinitions,
-  type ToolExecutionContext,
-} from "./tools.ts";
+import { executeToolCall, getAgentToolDefinitions, type ToolExecutionContext } from "./tools.ts";
 
 export interface AgentRunOptions {
   apiKey: string;
@@ -26,9 +22,7 @@ export interface AgentRunOptions {
   acceptEdits?: boolean;
   signal?: AbortSignal;
   requestToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
-  reviewToolSafety?: (
-    request: ToolApprovalRequest,
-  ) => Promise<ToolSafetyReviewResult>;
+  reviewToolSafety?: (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult>;
   onEvent?: (event: AgentRunEvent) => void;
 }
 
@@ -77,9 +71,7 @@ const DEFAULT_AGENT_SYSTEM_PROMPT = [
 // user a clear failure boundary.
 const MAX_TOOL_ROUNDS = 40;
 
-export async function runAgentTurn(
-  options: AgentRunOptions,
-): Promise<AgentRunResult> {
+export async function runAgentTurn(options: AgentRunOptions): Promise<AgentRunResult> {
   const workspaceRoot = cwd();
   const allowFileEdits = options.planMode !== true;
   const allowShell = options.planMode !== true;
@@ -91,10 +83,7 @@ export async function runAgentTurn(
   const combinedSystemPrompt = buildSystemPrompt(options);
   const tools = getAgentToolDefinitions({ allowShell, allowFileEdits });
 
-  const baseHistory = [
-    ...options.history,
-    { role: "user" as const, content: options.prompt },
-  ];
+  const baseHistory = [...options.history, { role: "user" as const, content: options.prompt }];
   let modelMessages = chatHistoryToModelMessages(baseHistory);
 
   const executedToolResults: ExecutedToolResult[] = [];
@@ -132,20 +121,14 @@ export async function runAgentTurn(
       output: string;
     }> = [];
     for (const functionCall of functionCalls) {
-      const summary = summarizeToolCall(
-        functionCall.name,
-        functionCall.argumentsText,
-      );
+      const summary = summarizeToolCall(functionCall.name, functionCall.argumentsText);
       const safetyReviewRequest = getToolSafetyReviewRequest(
         functionCall.name,
         functionCall.argumentsText,
         options,
       );
       if (safetyReviewRequest) {
-        const safetyReview = await reviewToolSafety(
-          safetyReviewRequest,
-          options.reviewToolSafety,
-        );
+        const safetyReview = await reviewToolSafety(safetyReviewRequest, options.reviewToolSafety);
         if (!safetyReview.safe) {
           const deniedResult = createDeniedToolCallResult(
             functionCall.name,
@@ -174,10 +157,7 @@ export async function runAgentTurn(
         options,
       );
       if (approvalRequest) {
-        const approved = await requestToolApproval(
-          approvalRequest,
-          options.requestToolApproval,
-        );
+        const approved = await requestToolApproval(approvalRequest, options.requestToolApproval);
         if (!approved) {
           const deniedResult = createDeniedToolCallResult(
             functionCall.name,
@@ -320,10 +300,7 @@ export function getToolApprovalRequest(
           `model reason: ${previewForDisplay(toolReason)}`,
           `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
           `bytes: ${String(
-            Buffer.byteLength(
-              getStringArgument(parsed, "content") ?? "",
-              "utf-8",
-            ),
+            Buffer.byteLength(getStringArgument(parsed, "content") ?? "", "utf-8"),
           )}`,
         ],
       };
@@ -366,9 +343,7 @@ export function getToolSafetyReviewRequest(
         title: "Review bash command safety",
         reason: toolReason ?? "",
         summary: summarizeToolCall(toolName, argumentsText),
-        details: [
-          `command: ${previewForDisplay(getStringArgument(parsed, "command"))}`,
-        ],
+        details: [`command: ${previewForDisplay(getStringArgument(parsed, "command"))}`],
       };
     case "Write":
       return {
@@ -379,10 +354,7 @@ export function getToolSafetyReviewRequest(
         details: [
           `file: ${previewForDisplay(getStringArgument(parsed, "file_path"))}`,
           `bytes: ${String(
-            Buffer.byteLength(
-              getStringArgument(parsed, "content") ?? "",
-              "utf-8",
-            ),
+            Buffer.byteLength(getStringArgument(parsed, "content") ?? "", "utf-8"),
           )}`,
         ],
       };
@@ -469,12 +441,7 @@ async function executeToolCallSafely(
       throw error;
     }
 
-    return createFailedToolCallResult(
-      request.name,
-      request.callId,
-      summary,
-      error,
-    );
+    return createFailedToolCallResult(request.name, request.callId, summary, error);
   }
 }
 
@@ -539,10 +506,7 @@ function safeParseArguments(argumentsText: string): Record<string, unknown> {
   }
 }
 
-function getStringArgument(
-  args: Record<string, unknown>,
-  key: string,
-): string | undefined {
+function getStringArgument(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -571,9 +535,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-function buildFallbackAssistantText(
-  results: readonly ExecutedToolResult[],
-): string {
+function buildFallbackAssistantText(results: readonly ExecutedToolResult[]): string {
   const lastResult = results[results.length - 1];
   if (!lastResult) {
     return "";
@@ -588,8 +550,7 @@ function buildFallbackAssistantText(
     const command = getStringArgument(payload, "command");
     const stderr = getStringArgument(payload, "stderr")?.trim();
     const timedOut = payload["timed_out"] === true;
-    const exitCode =
-      typeof payload["exit_code"] === "number" ? payload["exit_code"] : null;
+    const exitCode = typeof payload["exit_code"] === "number" ? payload["exit_code"] : null;
 
     if (timedOut) {
       return command ? `Command timed out: ${command}` : "Command timed out.";

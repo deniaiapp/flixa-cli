@@ -266,4 +266,7 @@ flixa login --provider custom-openai --base-url http://your-endpoint/v1
 bun install
 bun run dev
 bun run build
+bun run check
+bun run lint
+bun run format
 ```

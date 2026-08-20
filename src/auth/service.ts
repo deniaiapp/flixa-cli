@@ -10,7 +10,7 @@ export function getApiKey(provider: ProviderId = DEFAULT_PROVIDER): string | nul
   const environmentNames =
     provider === "flixa"
       ? ["FLIXA_API_KEY", "OPENAI_API_KEY"]
-      : getProviderDefinition(provider).apiKeyEnvNames ?? [];
+      : (getProviderDefinition(provider).apiKeyEnvNames ?? []);
   for (const environmentName of environmentNames) {
     const environmentValue = process.env[environmentName]?.trim();
     if (environmentValue) {

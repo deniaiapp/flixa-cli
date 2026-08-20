@@ -23,16 +23,22 @@
     "start": "bun run src/index.ts",
     "providers:update": "node scripts/update-models-dev.mjs",
     "openclaw:check": "node scripts/verify-openclaw-integration.mjs",
-    "check": "bunx tsc --noEmit && bun run build && bun run openclaw:check",
+    "lint": "oxlint src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
+    "format": "oxfmt src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
+    "format:check": "oxfmt --check src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
+    "check": "bunx tsc --noEmit && bun run lint && bun run format:check && bun run build && bun run openclaw:check",
     "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^25.5.0",
-    "@types/react": "^18.3.12"
+    "@types/react": "^18.3.12",
+    "oxfmt": "^0.64.0",
+    "oxlint": "^1.79.0",
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^7"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.64",

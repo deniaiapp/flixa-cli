@@ -35,7 +35,10 @@ export function loadConfig(): FlixaConfig {
 
 export function saveConfig(config: FlixaConfig): void {
   ensurePrivateParent(CONFIG_PATH);
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
+  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
   enforcePrivateFile(CONFIG_PATH);
 }
 
@@ -108,7 +111,10 @@ export function getPersistedProviderBaseUrl(provider: ProviderId): string | unde
   return typeof baseUrl === "string" && baseUrl.length > 0 ? baseUrl : undefined;
 }
 
-export function setPersistedProviderBaseUrl(provider: ProviderId, baseUrl: string | undefined): void {
+export function setPersistedProviderBaseUrl(
+  provider: ProviderId,
+  baseUrl: string | undefined,
+): void {
   const trimmed = baseUrl?.trim();
   const current = loadConfig();
   const existing = current.providers?.[provider]?.baseUrl;
@@ -171,17 +177,9 @@ export function setPersistedModeDefaults(next: {
   const current = loadConfig();
   saveConfig({
     ...current,
-    ...(typeof next.autoMode === "boolean"
-      ? { defaultAutoMode: next.autoMode }
-      : {}),
-    ...(typeof next.yoloMode === "boolean"
-      ? { defaultYoloMode: next.yoloMode }
-      : {}),
-    ...(typeof next.planMode === "boolean"
-      ? { defaultPlanMode: next.planMode }
-      : {}),
-    ...(typeof next.acceptEdits === "boolean"
-      ? { defaultAcceptEdits: next.acceptEdits }
-      : {}),
+    ...(typeof next.autoMode === "boolean" ? { defaultAutoMode: next.autoMode } : {}),
+    ...(typeof next.yoloMode === "boolean" ? { defaultYoloMode: next.yoloMode } : {}),
+    ...(typeof next.planMode === "boolean" ? { defaultPlanMode: next.planMode } : {}),
+    ...(typeof next.acceptEdits === "boolean" ? { defaultAcceptEdits: next.acceptEdits } : {}),
   });
 }

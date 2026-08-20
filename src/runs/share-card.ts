@@ -1,9 +1,5 @@
 import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 const MAX_GIT_OUTPUT_CHARS = 12_000;
@@ -107,9 +103,9 @@ export function copyToClipboard(value: string): ClipboardCopyResult {
         return { copied: true, method: candidate.method };
       }
 
-      const errorOutput =
-        typeof result.stderr === "string" ? result.stderr.trim() : "";
-      lastReason = errorOutput || `${candidate.command} exited with status ${result.status ?? "unknown"}.`;
+      const errorOutput = typeof result.stderr === "string" ? result.stderr.trim() : "";
+      lastReason =
+        errorOutput || `${candidate.command} exited with status ${result.status ?? "unknown"}.`;
     } catch (error) {
       lastReason = error instanceof Error ? error.message : String(error);
     }
@@ -178,15 +174,16 @@ export function buildShareCard(input: ShareCardInput): string {
   const snapshot = readGitSnapshot(workspaceRoot);
   const duration = formatDuration(input.startedAt, input.endedAt);
   const verificationFailed =
-    input.verification &&
-    (input.verification.timedOut || input.verification.exitCode !== 0);
+    input.verification && (input.verification.timedOut || input.verification.exitCode !== 0);
   const resultLabel = input.planMode
     ? "PLAN READY"
     : verificationFailed
       ? "NOT SHIPPED"
       : "SHIPPED";
   const changedFiles = snapshot.changedFiles.length
-    ? snapshot.changedFiles.map((file) => `- \`${redactShareText(file, workspaceRoot)}\``).join("\n")
+    ? snapshot.changedFiles
+        .map((file) => `- \`${redactShareText(file, workspaceRoot)}\``)
+        .join("\n")
     : "- (no changed files detected)";
   const verification = input.verification
     ? formatVerification(input.verification, workspaceRoot)
@@ -229,11 +226,7 @@ export function buildShareCard(input: ShareCardInput): string {
   ].join("\n");
 }
 
-export function writeShareCard(
-  card: string,
-  outputPath: string,
-  workspaceRoot: string,
-): string {
+export function writeShareCard(card: string, outputPath: string, workspaceRoot: string): string {
   const resolvedPath = isAbsolute(outputPath)
     ? resolve(outputPath)
     : resolve(workspaceRoot, outputPath);
@@ -245,10 +238,7 @@ export function writeShareCard(
   return resolvedPath;
 }
 
-function formatVerification(
-  evidence: VerificationEvidence,
-  workspaceRoot: string,
-): string {
+function formatVerification(evidence: VerificationEvidence, workspaceRoot: string): string {
   if (evidence.timedOut) {
     return `⚠️ timed out: \`${redactShareText(evidence.command, workspaceRoot)}\``;
   }

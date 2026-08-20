@@ -1,12 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { cwd } from "node:process";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
@@ -39,10 +33,7 @@ import {
   loadSessionById,
   saveSession,
 } from "../sessions/store.ts";
-import {
-  setPersistedModel,
-  setPersistedModeDefaults,
-} from "../config/store.ts";
+import { setPersistedModel, setPersistedModeDefaults } from "../config/store.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
@@ -162,12 +153,9 @@ export async function runInteractiveChatApp(
   options: InteractiveChatOptions,
   session: StoredChatSession,
 ): Promise<void> {
-  const app = render(
-    <InteractiveChatApp apiKey={apiKey} options={options} session={session} />,
-    {
-      exitOnCtrlC: false,
-    },
-  );
+  const app = render(<InteractiveChatApp apiKey={apiKey} options={options} session={session} />, {
+    exitOnCtrlC: false,
+  });
   await app.waitUntilExit();
 }
 
@@ -178,8 +166,7 @@ function InteractiveChatApp({
 }: InteractiveChatAppProps): React.JSX.Element {
   const { exit } = useApp();
   const [input, setInput] = useState("");
-  const [activeSession, setActiveSession] =
-    useState<StoredChatSession>(session);
+  const [activeSession, setActiveSession] = useState<StoredChatSession>(session);
   const [messages, setMessages] = useState<UiMessage[]>(() =>
     buildInitialMessages(
       session.history,
@@ -188,95 +175,58 @@ function InteractiveChatApp({
       session.model || options.model,
     ),
   );
-  const [conversation, setConversation] = useState<ChatMessage[]>(
-    session.history,
-  );
+  const [conversation, setConversation] = useState<ChatMessage[]>(session.history);
   const [status, setStatus] = useState("Ready");
   const [loading, setLoading] = useState(false);
-  const [currentModel, setCurrentModel] = useState(
-    session.model || options.model,
-  );
-  const [currentModelLabel, setCurrentModelLabel] = useState(
-    session.model || options.model,
-  );
-  const initialModes = useMemo(
-    () => getInitialModes(options, session),
-    [options, session],
-  );
+  const [currentModel, setCurrentModel] = useState(session.model || options.model);
+  const [currentModelLabel, setCurrentModelLabel] = useState(session.model || options.model);
+  const initialModes = useMemo(() => getInitialModes(options, session), [options, session]);
   const [autoMode, setAutoMode] = useState(initialModes.autoMode);
   const [yoloMode, setYoloMode] = useState(initialModes.yoloMode);
   const [planMode, setPlanMode] = useState(initialModes.planMode);
   const [acceptEdits, setAcceptEdits] = useState(initialModes.acceptEdits);
-  const [selectedCommandSuggestionIndex, setSelectedCommandSuggestionIndex] =
-    useState(0);
-  const [resumeSelectorSessions, setResumeSelectorSessions] = useState<
-    StoredChatSession[]
-  >([]);
-  const [selectedResumeSessionIndex, setSelectedResumeSessionIndex] =
-    useState(0);
+  const [selectedCommandSuggestionIndex, setSelectedCommandSuggestionIndex] = useState(0);
+  const [resumeSelectorSessions, setResumeSelectorSessions] = useState<StoredChatSession[]>([]);
+  const [selectedResumeSessionIndex, setSelectedResumeSessionIndex] = useState(0);
   const [modelSelectorModels, setModelSelectorModels] = useState<
     Array<FlixaModelDefinition | ProviderModelOption>
   >([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
-  const [thinkingStatus, setThinkingStatus] = useState<
-    "thinking" | number | null
-  >(null);
-  const [pendingApproval, setPendingApproval] =
-    useState<ToolApprovalRequest | null>(null);
-  const [approvalChoice, setApprovalChoice] =
-    useState<ApprovalChoice>("approve");
+  const [thinkingStatus, setThinkingStatus] = useState<"thinking" | number | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<ToolApprovalRequest | null>(null);
+  const [approvalChoice, setApprovalChoice] = useState<ApprovalChoice>("approve");
   const abortRef = useRef<AbortController | null>(null);
   const thinkingStartRef = useRef<number | null>(null);
   const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
   const approvalRejectRef = useRef<((error: Error) => void) | null>(null);
   const approvalCleanupRef = useRef<(() => void) | null>(null);
   const cwdValue = activeSession.cwd || cwd();
-  const commandSuggestions = useMemo(
-    () => getCommandSuggestions(input),
-    [input],
-  );
+  const commandSuggestions = useMemo(() => getCommandSuggestions(input), [input]);
   const isResumeSelectorOpen = resumeSelectorSessions.length > 0;
   const isModelSelectorOpen = modelSelectorModels.length > 0;
   const isAutocompleteOpen =
-    commandSuggestions.length > 0 &&
-    !isResumeSelectorOpen &&
-    !isModelSelectorOpen;
-  const shouldShowFooter = !isAutocompleteOpen;
+    commandSuggestions.length > 0 && !isResumeSelectorOpen && !isModelSelectorOpen;
   const activeFooterMode = useMemo(
     () => getActiveFooterMode(autoMode, yoloMode, planMode, acceptEdits),
     [acceptEdits, autoMode, yoloMode, planMode],
   );
-  const activeFooterModeLabel = activeFooterMode
-    ? getFooterModeLabel(activeFooterMode)
-    : null;
+  const activeFooterModeLabel = activeFooterMode ? getFooterModeLabel(activeFooterMode) : null;
   const selectedCommandSuggestion =
-    commandSuggestions[selectedCommandSuggestionIndex] ??
-    commandSuggestions[0] ??
-    null;
+    commandSuggestions[selectedCommandSuggestionIndex] ?? commandSuggestions[0] ?? null;
   const selectedResumeSession =
-    resumeSelectorSessions[selectedResumeSessionIndex] ??
-    resumeSelectorSessions[0] ??
-    null;
-  const selectedModel =
-    modelSelectorModels[selectedModelIndex] ?? modelSelectorModels[0] ?? null;
+    resumeSelectorSessions[selectedResumeSessionIndex] ?? resumeSelectorSessions[0] ?? null;
+  const selectedModel = modelSelectorModels[selectedModelIndex] ?? modelSelectorModels[0] ?? null;
 
   useEffect(() => {
-    setSelectedCommandSuggestionIndex((prev) =>
-      prev < commandSuggestions.length ? prev : 0,
-    );
+    setSelectedCommandSuggestionIndex((prev) => (prev < commandSuggestions.length ? prev : 0));
   }, [commandSuggestions.length]);
 
   useEffect(() => {
-    setSelectedModelIndex((prev) =>
-      prev < modelSelectorModels.length ? prev : 0,
-    );
+    setSelectedModelIndex((prev) => (prev < modelSelectorModels.length ? prev : 0));
   }, [modelSelectorModels.length]);
 
   const appendSystemMessage = useCallback((content: string) => {
-    setMessages((prev) => [
-      ...prev,
-      { id: randomUUID(), role: "system", content },
-    ]);
+    setMessages((prev) => [...prev, { id: randomUUID(), role: "system", content }]);
   }, []);
 
   const settleApprovalRequest = useCallback(
@@ -312,9 +262,7 @@ function InteractiveChatApp({
       abortRef.current = null;
       setMessages([
         buildHeaderMessage(currentModelLabel, cwdValue),
-        ...(reason
-          ? [{ id: randomUUID(), role: "system" as const, content: reason }]
-          : []),
+        ...(reason ? [{ id: randomUUID(), role: "system" as const, content: reason }] : []),
       ]);
       setConversation([]);
       setStatus("Conversation cleared");
@@ -339,14 +287,7 @@ function InteractiveChatApp({
     });
     saveSession(nextSession);
     setActiveSession(nextSession);
-    setMessages(
-      buildInitialMessages(
-        [],
-        currentModel,
-        nextSession.cwd,
-        currentModelLabel,
-      ),
-    );
+    setMessages(buildInitialMessages([], currentModel, nextSession.cwd, currentModelLabel));
     setConversation([]);
     setInput("");
     setStatus("Ready");
@@ -412,9 +353,7 @@ function InteractiveChatApp({
             maxOutputTokens: 120,
             toolChoice: "none",
           });
-          const verdict =
-            extractOutputText(response).trim() ||
-            "UNSAFE: Empty review response.";
+          const verdict = extractOutputText(response).trim() || "UNSAFE: Empty review response.";
           const normalizedVerdict = verdict.toUpperCase();
           return {
             safe: normalizedVerdict.startsWith("SAFE:"),
@@ -527,9 +466,7 @@ function InteractiveChatApp({
             acceptEdits,
             signal: abortController.signal,
             reviewToolSafety: yoloMode ? undefined : reviewToolSafety,
-            requestToolApproval: yoloMode
-              ? async () => true
-              : requestToolApproval,
+            requestToolApproval: yoloMode ? async () => true : requestToolApproval,
             onEvent: (event) => {
               if (event.type === "tool_start") {
                 setStatus(`Running ${event.toolName}…`);
@@ -592,9 +529,7 @@ function InteractiveChatApp({
             yoloMode,
             acceptEdits,
             reviewToolSafety: yoloMode ? undefined : reviewToolSafety,
-            requestToolApproval: yoloMode
-              ? async () => true
-              : requestToolApproval,
+            requestToolApproval: yoloMode ? async () => true : requestToolApproval,
             onEvent: (event) => {
               if (event.type === "tool_start") {
                 setStatus(`Running ${event.toolName}…`);
@@ -639,8 +574,7 @@ function InteractiveChatApp({
           appendSystemMessage("Request canceled.");
           setStatus("Request canceled");
         } else {
-          const message =
-            error instanceof Error ? error.message : String(error);
+          const message = error instanceof Error ? error.message : String(error);
           appendSystemMessage(`Request failed: ${message}`);
           setStatus("Last request failed");
         }
@@ -678,10 +612,7 @@ function InteractiveChatApp({
       setActiveSession(nextSession);
       setCurrentModel(nextModel);
       setCurrentModelLabel(nextModel);
-      setPersistedModel(
-        nextModel,
-        resolveProviderContext({ provider: options.provider }).provider,
-      );
+      setPersistedModel(nextModel, resolveProviderContext({ provider: options.provider }).provider);
       setConversation(nextSession.history);
       setAutoMode(nextSession.autoMode ?? options.autoMode);
       setYoloMode(nextSession.yoloMode ?? options.yoloMode);
@@ -694,12 +625,7 @@ function InteractiveChatApp({
           role: "system",
           content: `Switched to ${sourceLabel}: ${nextSession.id.slice(0, 8)}`,
         },
-        ...buildInitialMessages(
-          nextSession.history,
-          nextModel,
-          nextSession.cwd,
-          currentModelLabel,
-        ),
+        ...buildInitialMessages(nextSession.history, nextModel, nextSession.cwd, currentModelLabel),
       ]);
       setStatus(`Resumed ${nextSession.id.slice(0, 8)}`);
     },
@@ -744,10 +670,7 @@ function InteractiveChatApp({
     (nextModel: string, label?: string) => {
       setCurrentModel(nextModel);
       setCurrentModelLabel(label ?? nextModel);
-      setPersistedModel(
-        nextModel,
-        resolveProviderContext({ provider: options.provider }).provider,
-      );
+      setPersistedModel(nextModel, resolveProviderContext({ provider: options.provider }).provider);
       const nextSession = {
         ...activeSession,
         model: nextModel,
@@ -765,14 +688,7 @@ function InteractiveChatApp({
       );
       setStatus(`Model: ${label ?? nextModel}`);
     },
-    [
-      acceptEdits,
-      activeSession,
-      appendSystemMessage,
-      autoMode,
-      yoloMode,
-      planMode,
-    ],
+    [acceptEdits, activeSession, appendSystemMessage, autoMode, yoloMode, planMode],
   );
 
   useEffect(() => {
@@ -798,14 +714,10 @@ function InteractiveChatApp({
           const matchedModel =
             models.find((model) => model.id === currentModel) ??
             models.find(
-              (model) =>
-                stripModelProvider(model.id) ===
-                stripModelProvider(currentModel),
+              (model) => stripModelProvider(model.id) === stripModelProvider(currentModel),
             );
 
-          setCurrentModelLabel(
-            matchedModel ? matchedModel.label : currentModel,
-          );
+          setCurrentModelLabel(matchedModel ? matchedModel.label : currentModel);
           return;
         }
 
@@ -876,14 +788,7 @@ function InteractiveChatApp({
       appendSystemMessage(`Failed to load models: ${message}`);
       setStatus("Model selector failed");
     }
-  }, [
-    apiKey,
-    appendSystemMessage,
-    currentModel,
-    loading,
-    options.baseUrl,
-    options.provider,
-  ]);
+  }, [apiKey, appendSystemMessage, currentModel, loading, options.baseUrl, options.provider]);
 
   const showUsage = useCallback(async () => {
     if (loading) {
@@ -919,14 +824,7 @@ function InteractiveChatApp({
       appendSystemMessage(`Failed to load usage: ${message}`);
       setStatus("Usage request failed");
     }
-  }, [
-    apiKey,
-    appendSystemMessage,
-    currentModel,
-    loading,
-    options.baseUrl,
-    options.provider,
-  ]);
+  }, [apiKey, appendSystemMessage, currentModel, loading, options.baseUrl, options.provider]);
 
   const applyFooterMode = useCallback(
     (modeKey: FooterModeKey | null) => {
@@ -966,10 +864,7 @@ function InteractiveChatApp({
         const resolvedPath = writeShareCard(card, outputPath, cwdValue);
         appendSystemMessage(`Share card saved to ${resolvedPath}`);
       } else {
-        setMessages((prev) => [
-          ...prev,
-          { id: randomUUID(), role: "card", content: card },
-        ]);
+        setMessages((prev) => [...prev, { id: randomUUID(), role: "card", content: card }]);
       }
       if (clipboard.copied) {
         appendSystemMessage(`Share card copied to clipboard (${clipboard.method}).`);
@@ -987,14 +882,7 @@ function InteractiveChatApp({
             : "Share card ready",
       );
     },
-    [
-      activeSession,
-      appendSystemMessage,
-      currentModel,
-      cwdValue,
-      options.provider,
-      planMode,
-    ],
+    [activeSession, appendSystemMessage, currentModel, cwdValue, options.provider, planMode],
   );
 
   const showGitDiff = useCallback(() => {
@@ -1161,16 +1049,12 @@ function InteractiveChatApp({
     (keyInput, key) => {
       if (pendingApproval) {
         if (key.leftArrow || key.upArrow || key.tab) {
-          setApprovalChoice((prev) =>
-            prev === "approve" ? "deny" : "approve",
-          );
+          setApprovalChoice((prev) => (prev === "approve" ? "deny" : "approve"));
           return;
         }
 
         if (key.rightArrow || key.downArrow) {
-          setApprovalChoice((prev) =>
-            prev === "approve" ? "deny" : "approve",
-          );
+          setApprovalChoice((prev) => (prev === "approve" ? "deny" : "approve"));
           return;
         }
 
@@ -1201,16 +1085,12 @@ function InteractiveChatApp({
         }
 
         if (key.upArrow) {
-          setSelectedModelIndex((prev) =>
-            prev <= 0 ? modelSelectorModels.length - 1 : prev - 1,
-          );
+          setSelectedModelIndex((prev) => (prev <= 0 ? modelSelectorModels.length - 1 : prev - 1));
           return;
         }
 
         if (key.downArrow) {
-          setSelectedModelIndex((prev) =>
-            prev >= modelSelectorModels.length - 1 ? 0 : prev + 1,
-          );
+          setSelectedModelIndex((prev) => (prev >= modelSelectorModels.length - 1 ? 0 : prev + 1));
           return;
         }
 
@@ -1350,9 +1230,7 @@ function InteractiveChatApp({
       </Box>
 
       <Box marginTop={0} flexDirection="column">
-        {thinkingStatus !== null ? (
-          <ThinkingIndicator thinkingStatus={thinkingStatus} />
-        ) : null}
+        {thinkingStatus !== null ? <ThinkingIndicator thinkingStatus={thinkingStatus} /> : null}
         <Box flexDirection="column">
           <Box
             borderStyle="round"
@@ -1368,20 +1246,13 @@ function InteractiveChatApp({
               value={input}
               onChange={setInput}
               onSubmit={handleCommand}
-              focus={
-                !isResumeSelectorOpen &&
-                !isModelSelectorOpen &&
-                pendingApproval === null
-              }
+              focus={!isResumeSelectorOpen && !isModelSelectorOpen && pendingApproval === null}
               placeholder="Ask Flixa for code, diffs, or analysis…"
             />
           </Box>
         </Box>
         {pendingApproval ? (
-          <PermissionApprovalDialog
-            request={pendingApproval}
-            choice={approvalChoice}
-          />
+          <PermissionApprovalDialog request={pendingApproval} choice={approvalChoice} />
         ) : null}
         {isResumeSelectorOpen ? (
           <ResumeSelector
@@ -1389,10 +1260,7 @@ function InteractiveChatApp({
             selectedIndex={selectedResumeSessionIndex}
           />
         ) : isModelSelectorOpen ? (
-          <ModelSelector
-            models={modelSelectorModels}
-            selectedIndex={selectedModelIndex}
-          />
+          <ModelSelector models={modelSelectorModels} selectedIndex={selectedModelIndex} />
         ) : null}
         {!pendingApproval && isAutocompleteOpen ? (
           <CommandAutocomplete
@@ -1420,13 +1288,7 @@ function MessageRow({ message }: { message: UiMessage }): React.JSX.Element {
         {lines.map((line, index) => (
           <Text
             key={index}
-            color={
-              index === 1
-                ? COLORS.assistant
-                : index === 2
-                  ? COLORS.dim
-                  : undefined
-            }
+            color={index === 1 ? COLORS.assistant : index === 2 ? COLORS.dim : undefined}
           >
             {line}
           </Text>
@@ -1451,9 +1313,7 @@ function MessageRow({ message }: { message: UiMessage }): React.JSX.Element {
     return (
       <Box flexDirection="column" marginBottom={1}>
         {message.content.split(/\r?\n/).map((line, index) => (
-          <React.Fragment key={index}>
-            {renderSystemLine(line, index)}
-          </React.Fragment>
+          <React.Fragment key={index}>{renderSystemLine(line, index)}</React.Fragment>
         ))}
       </Box>
     );
@@ -1506,9 +1366,7 @@ function MessageRow({ message }: { message: UiMessage }): React.JSX.Element {
       {renderedLines.map((line, index) => (
         <React.Fragment key={index}>
           <Text wrap="wrap">{line}</Text>
-          {index < renderedLines.length - 1 && line.trim() === "" ? (
-            <Text dimColor> </Text>
-          ) : null}
+          {index < renderedLines.length - 1 && line.trim() === "" ? <Text dimColor> </Text> : null}
         </React.Fragment>
       ))}
       {message.pending && message.content ? (
@@ -1536,20 +1394,14 @@ function Footer({
       <Box>
         {selectedModeLabel ? (
           <Box>
-            <Text
-              color={getFooterModeColor(selectedMode)}
-            >{`>> ${selectedModeLabel}`}</Text>
+            <Text color={getFooterModeColor(selectedMode)}>{`>> ${selectedModeLabel}`}</Text>
             <Text color={COLORS.dim}> · shift + tab to switch</Text>
           </Box>
         ) : (
-          <Text color={COLORS.dim}>
-            /help for shortcuts, commands and more...
-          </Text>
+          <Text color={COLORS.dim}>/help for shortcuts, commands and more...</Text>
         )}
       </Box>
-      <Text color={COLORS.dim}>
-        {loading ? "Esc clears input · Ctrl+C cancels" : status}
-      </Text>
+      <Text color={COLORS.dim}>{loading ? "Esc clears input · Ctrl+C cancels" : status}</Text>
     </Box>
   );
 }
@@ -1599,9 +1451,7 @@ function PermissionApprovalDialog({
         <Text color={COLORS.dim}>←→ select · Enter confirm · Esc deny</Text>
       </Box>
       <Text>{request.reason}</Text>
-      <Text
-        color={COLORS.assistant}
-      >{`${request.toolName}: ${request.summary}`}</Text>
+      <Text color={COLORS.assistant}>{`${request.toolName}: ${request.summary}`}</Text>
       {request.details.map((detail) => (
         <Text key={detail} color={COLORS.dim} wrap="wrap">
           {`· ${detail}`}
@@ -1627,22 +1477,11 @@ function ResumeSelector({
   sessions: readonly StoredChatSession[];
   selectedIndex: number;
 }): React.JSX.Element {
-  const visibleStartIndex = Math.max(
-    0,
-    Math.min(selectedIndex - 2, sessions.length - 6),
-  );
-  const visibleSessions = sessions.slice(
-    visibleStartIndex,
-    visibleStartIndex + 6,
-  );
+  const visibleStartIndex = Math.max(0, Math.min(selectedIndex - 2, sessions.length - 6));
+  const visibleSessions = sessions.slice(visibleStartIndex, visibleStartIndex + 6);
 
   return (
-    <Box
-      borderStyle="round"
-      borderColor={COLORS.border}
-      flexDirection="column"
-      paddingX={1}
-    >
+    <Box borderStyle="round" borderColor={COLORS.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={COLORS.assistant}>Resume Conversation</Text>
         <Text color={COLORS.dim}>↑↓ select · Enter resume · Esc cancel</Text>
@@ -1651,11 +1490,7 @@ function ResumeSelector({
         const absoluteIndex = visibleStartIndex + index;
         const isSelected = absoluteIndex === selectedIndex;
         return (
-          <Text
-            key={session.id}
-            color={isSelected ? COLORS.assistant : COLORS.dim}
-            wrap="truncate"
-          >
+          <Text key={session.id} color={isSelected ? COLORS.assistant : COLORS.dim} wrap="truncate">
             {isSelected ? "> " : "  "}
             {formatRecentSessionLabel(session)}
           </Text>
@@ -1672,19 +1507,11 @@ function ModelSelector({
   models: ReadonlyArray<FlixaModelDefinition | ProviderModelOption>;
   selectedIndex: number;
 }): React.JSX.Element {
-  const visibleStartIndex = Math.max(
-    0,
-    Math.min(selectedIndex - 2, models.length - 5),
-  );
+  const visibleStartIndex = Math.max(0, Math.min(selectedIndex - 2, models.length - 5));
   const visibleModels = models.slice(visibleStartIndex, visibleStartIndex + 5);
 
   return (
-    <Box
-      borderStyle="round"
-      borderColor={COLORS.border}
-      flexDirection="column"
-      paddingX={1}
-    >
+    <Box borderStyle="round" borderColor={COLORS.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={COLORS.assistant}>Select Model</Text>
         <Text color={COLORS.dim}>↑↓ select · Enter apply · Esc cancel</Text>
@@ -1709,10 +1536,7 @@ function ModelSelector({
               {model.label}
             </Text>
             {isFlixaModel && secondaryLine ? (
-              <Text
-                color={isSelected ? COLORS.system : COLORS.dim}
-                wrap="truncate"
-              >
+              <Text color={isSelected ? COLORS.system : COLORS.dim} wrap="truncate">
                 {`  ${truncateEnd(secondaryLine, 84)}`}
               </Text>
             ) : null}
@@ -1735,16 +1559,9 @@ function CommandAutocomplete({
   suggestions: readonly SlashCommandSuggestion[];
   selectedIndex: number;
 }): React.JSX.Element {
-  const selectedSuggestion =
-    suggestions[selectedIndex] ?? suggestions[0] ?? null;
-  const visibleStartIndex = Math.max(
-    0,
-    Math.min(selectedIndex - 1, suggestions.length - 4),
-  );
-  const visibleSuggestions = suggestions.slice(
-    visibleStartIndex,
-    visibleStartIndex + 4,
-  );
+  const selectedSuggestion = suggestions[selectedIndex] ?? suggestions[0] ?? null;
+  const visibleStartIndex = Math.max(0, Math.min(selectedIndex - 1, suggestions.length - 4));
+  const visibleSuggestions = suggestions.slice(visibleStartIndex, visibleStartIndex + 4);
 
   return (
     <Box paddingX={2} flexDirection="column">
@@ -1817,24 +1634,18 @@ function truncateEnd(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - 1)}…`;
 }
 
-function getCommandSuggestions(
-  input: string,
-): readonly SlashCommandSuggestion[] {
+function getCommandSuggestions(input: string): readonly SlashCommandSuggestion[] {
   if (!isCommandInput(input) || hasCommandArgs(input)) {
     return [];
   }
 
   const query = input.slice(1).trim().toLowerCase();
   if (query === "") {
-    return [...SLASH_COMMANDS].sort((left, right) =>
-      left.name.localeCompare(right.name),
-    );
+    return [...SLASH_COMMANDS].sort((left, right) => left.name.localeCompare(right.name));
   }
 
   return SLASH_COMMANDS.map((command) => rankCommandSuggestion(command, query))
-    .filter(
-      (suggestion): suggestion is RankedSlashCommand => suggestion !== null,
-    )
+    .filter((suggestion): suggestion is RankedSlashCommand => suggestion !== null)
     .sort(compareRankedSlashCommands)
     .map(({ command, matchedAlias }) => ({ ...command, matchedAlias }));
 }
@@ -1866,10 +1677,7 @@ function formatCommandInput(commandName: string): string {
   return `${commandName} `;
 }
 
-function rankCommandSuggestion(
-  command: SlashCommand,
-  query: string,
-): RankedSlashCommand | null {
+function rankCommandSuggestion(command: SlashCommand, query: string): RankedSlashCommand | null {
   const normalizedName = normalizeCommandToken(command.name);
   const normalizedAliases = (command.aliases ?? []).map((alias) => ({
     raw: alias,
@@ -1882,9 +1690,7 @@ function rankCommandSuggestion(
     return { command, bucket: 0, score: 0 };
   }
 
-  const exactAlias = normalizedAliases.find(
-    (alias) => alias.normalized === query,
-  );
+  const exactAlias = normalizedAliases.find((alias) => alias.normalized === query);
   if (exactAlias) {
     return { command, matchedAlias: exactAlias.raw, bucket: 1, score: 0 };
   }
@@ -1897,9 +1703,7 @@ function rankCommandSuggestion(
     };
   }
 
-  const prefixAlias = normalizedAliases.find((alias) =>
-    alias.normalized.startsWith(query),
-  );
+  const prefixAlias = normalizedAliases.find((alias) => alias.normalized.startsWith(query));
   if (prefixAlias) {
     return {
       command,
@@ -1971,10 +1775,7 @@ function rankCommandSuggestion(
   return null;
 }
 
-function compareRankedSlashCommands(
-  left: RankedSlashCommand,
-  right: RankedSlashCommand,
-): number {
+function compareRankedSlashCommands(left: RankedSlashCommand, right: RankedSlashCommand): number {
   if (left.bucket !== right.bucket) {
     return left.bucket - right.bucket;
   }
@@ -2018,9 +1819,7 @@ function renderSystemLine(line: string, index: number): React.JSX.Element {
     );
   }
 
-  return (
-    <Text color={COLORS.system}>{index === 0 ? `· ${line}` : `  ${line}`}</Text>
-  );
+  return <Text color={COLORS.system}>{index === 0 ? `· ${line}` : `  ${line}`}</Text>;
 }
 
 function getActiveFooterMode(
@@ -2063,9 +1862,7 @@ function getFooterModeLabel(mode: FooterModeKey): string | null {
   }
 }
 
-function getFooterModeColor(
-  mode: FooterModeKey,
-): (typeof COLORS)[keyof typeof COLORS] {
+function getFooterModeColor(mode: FooterModeKey): (typeof COLORS)[keyof typeof COLORS] {
   switch (mode) {
     case "yolo":
       return COLORS.error;
@@ -2099,10 +1896,7 @@ function getInitialModes(
     InteractiveChatOptions,
     "autoMode" | "yoloMode" | "planMode" | "acceptEdits" | "modeOverride"
   >,
-  session: Pick<
-    StoredChatSession,
-    "autoMode" | "yoloMode" | "planMode" | "acceptEdits"
-  >,
+  session: Pick<StoredChatSession, "autoMode" | "yoloMode" | "planMode" | "acceptEdits">,
 ): {
   autoMode: boolean;
   yoloMode: boolean;

@@ -20,7 +20,11 @@ interface CommandResult {
   error?: Error;
 }
 
-function runCommand(command: string, args: string[], options: Parameters<typeof spawnSync>[2] = {}): CommandResult {
+function runCommand(
+  command: string,
+  args: string[],
+  options: Parameters<typeof spawnSync>[2] = {},
+): CommandResult {
   const result = spawnSync(command, args, {
     encoding: "utf-8",
     ...options,
@@ -29,13 +33,9 @@ function runCommand(command: string, args: string[], options: Parameters<typeof 
   return {
     status: result.status,
     stdout:
-      typeof result.stdout === "string"
-        ? result.stdout
-        : result.stdout?.toString("utf-8") ?? "",
+      typeof result.stdout === "string" ? result.stdout : (result.stdout?.toString("utf-8") ?? ""),
     stderr:
-      typeof result.stderr === "string"
-        ? result.stderr
-        : result.stderr?.toString("utf-8") ?? "",
+      typeof result.stderr === "string" ? result.stderr : (result.stderr?.toString("utf-8") ?? ""),
     error: result.error,
   };
 }
@@ -45,7 +45,8 @@ function assertCommandSucceeded(action: string, result: CommandResult): void {
     throw new Error(`${action} failed: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${String(result.status)}`;
+    const detail =
+      result.stderr.trim() || result.stdout.trim() || `exit status ${String(result.status)}`;
     throw new Error(`${action} failed: ${detail}`);
   }
 }
@@ -76,9 +77,12 @@ function getWinDpapiFile(provider: ProviderId): string {
 function macSave(service: string, account: string, secret: string): void {
   const result = runCommand("security", [
     "add-generic-password",
-    "-s", service,
-    "-a", account,
-    "-w", secret,
+    "-s",
+    service,
+    "-a",
+    account,
+    "-w",
+    secret,
     "-U",
   ]);
   assertCommandSucceeded(`Saving secret to macOS Keychain for ${service}`, result);
@@ -87,8 +91,10 @@ function macSave(service: string, account: string, secret: string): void {
 function macLoad(service: string, account: string): string | null {
   const result = runCommand("security", [
     "find-generic-password",
-    "-s", service,
-    "-a", account,
+    "-s",
+    service,
+    "-a",
+    account,
     "-w",
   ]);
   if (result.error) return null;
@@ -104,7 +110,9 @@ function macDelete(service: string, account: string): void {
   if (result.status !== 0) {
     const detail = result.stderr.trim();
     if (!detail.includes("could not be found")) {
-      throw new Error(`Deleting secret from macOS Keychain failed: ${detail || `exit status ${String(result.status)}`}`);
+      throw new Error(
+        `Deleting secret from macOS Keychain failed: ${detail || `exit status ${String(result.status)}`}`,
+      );
     }
   }
 }

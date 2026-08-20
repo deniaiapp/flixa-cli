@@ -6,7 +6,6 @@ import {
   DEFAULT_FLIXA_MODEL,
   createResponse,
   extractOutputText,
-  type ChatMessage,
   type FlixaResponse,
 } from "../flixa/api.ts";
 import {
@@ -21,11 +20,7 @@ import {
 } from "../agent-tools/runner.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import { runInteractiveChatApp } from "../ui/chat-app.tsx";
-import {
-  getPersistedModeDefaults,
-  getPersistedModel,
-  setPersistedModel,
-} from "../config/store.ts";
+import { getPersistedModeDefaults, getPersistedModel, setPersistedModel } from "../config/store.ts";
 import {
   createSession,
   formatRecentSessionLabel,
@@ -72,54 +67,26 @@ type ChatOptions = {
   yolo: boolean;
 };
 
-type FooterModeOverride =
-  | "default"
-  | "accept-edits"
-  | "plan"
-  | "auto"
-  | "yolo"
-  | null;
+type FooterModeOverride = "default" | "accept-edits" | "plan" | "auto" | "yolo" | null;
 
 export function registerChatCommand(program: Command): void {
   applyChatOptions(program);
   program
     .argument("[prompt...]", "Prompt to send to Flixa")
-    .action(
-      async (
-        promptParts: string[],
-        options: RawChatOptions,
-        command: Command,
-      ) => {
-        await runChatCommandWithExit(
-          promptParts,
-          mergeInheritedChatOptions(options, command),
-        );
-      },
-    );
+    .action(async (promptParts: string[], options: RawChatOptions, command: Command) => {
+      await runChatCommandWithExit(promptParts, mergeInheritedChatOptions(options, command));
+    });
 
-  const chatCommand = program
-    .command("chat")
-    .description("Chat with Flixa from the terminal");
+  const chatCommand = program.command("chat").description("Chat with Flixa from the terminal");
 
   applyChatOptions(chatCommand);
   chatCommand
     .argument("[prompt...]", "Prompt to send to Flixa")
-    .action(
-      async (
-        promptParts: string[],
-        options: RawChatOptions,
-        command: Command,
-      ) => {
-        await runChatCommandWithExit(
-          promptParts,
-          mergeInheritedChatOptions(options, command),
-        );
-      },
-    );
+    .action(async (promptParts: string[], options: RawChatOptions, command: Command) => {
+      await runChatCommandWithExit(promptParts, mergeInheritedChatOptions(options, command));
+    });
 
-  const resumeCommand = program
-    .command("resume")
-    .description("Resume a saved Flixa conversation");
+  const resumeCommand = program.command("resume").description("Resume a saved Flixa conversation");
 
   applyChatOptions(resumeCommand);
   resumeCommand
@@ -147,21 +114,12 @@ function applyChatOptions(command: Command): void {
     .option("-p, --provider <provider>", "Provider to use (defaults to configured provider)")
     .option("-m, --model <model>", "Model to use", defaultModel)
     .option("-s, --system <prompt>", "System prompt")
-    .option(
-      "--base-url <url>",
-      "Override the API base URL for providers that support it",
-    )
+    .option("--base-url <url>", "Override the API base URL for providers that support it")
     .option("--json", "Print the raw JSON response")
     .option("--no-stream", "Disable streaming output")
     .option("--max-output-tokens <tokens>", "Limit response tokens")
-    .option(
-      "-c, --continue",
-      "Continue the latest conversation in this directory",
-    )
-    .option(
-      "-r, --resume [sessionId]",
-      "Resume a conversation by session id or pick from recent",
-    )
+    .option("-c, --continue", "Continue the latest conversation in this directory")
+    .option("-r, --resume [sessionId]", "Resume a conversation by session id or pick from recent")
     .option("--auto", "Start in auto mode")
     .option("--yolo-mode", "Start in yolo mode")
     .option("--plan", "Start in plan mode")
@@ -169,10 +127,7 @@ function applyChatOptions(command: Command): void {
     .option("--yolo", "Always allow approvals for one-shot runs");
 }
 
-async function runChatCommand(
-  promptParts: string[],
-  rawOptions: RawChatOptions,
-): Promise<void> {
+async function runChatCommand(promptParts: string[], rawOptions: RawChatOptions): Promise<void> {
   const options = normalizeOptions(rawOptions);
   const providerContext = resolveProviderContext({
     provider: options.provider,
@@ -197,19 +152,12 @@ async function runChatCommand(
 
   if (promptFromArgs || promptFromStdin) {
     const prompt = promptFromArgs || promptFromStdin || "";
-    options.system = buildInstructionSystemPrompt(
-      session.cwd || cwd(),
-      options.rawSystem,
-      prompt,
-    );
+    options.system = buildInstructionSystemPrompt(session.cwd || cwd(), options.rawSystem, prompt);
     await runSingleTurn(apiKey, options, session, prompt);
     return;
   }
 
-  options.system = buildInstructionSystemPrompt(
-    session.cwd || cwd(),
-    options.rawSystem,
-  );
+  options.system = buildInstructionSystemPrompt(session.cwd || cwd(), options.rawSystem);
   restoreInteractiveStdin();
   await runInteractiveChat(apiKey, options, session);
 }
@@ -227,10 +175,7 @@ async function runChatCommandWithExit(
   }
 }
 
-function mergeInheritedChatOptions(
-  options: RawChatOptions,
-  command: Command,
-): RawChatOptions {
+function mergeInheritedChatOptions(options: RawChatOptions, command: Command): RawChatOptions {
   return {
     ...(command.parent?.opts?.() as Partial<RawChatOptions> | undefined),
     ...options,
@@ -239,10 +184,7 @@ function mergeInheritedChatOptions(
 
 function normalizeOptions(rawOptions: RawChatOptions): ChatOptions {
   const defaults = getPersistedModeDefaults();
-  const maxOutputTokens = parseIntegerOption(
-    rawOptions.maxOutputTokens,
-    "--max-output-tokens",
-  );
+  const maxOutputTokens = parseIntegerOption(rawOptions.maxOutputTokens, "--max-output-tokens");
   const modeFlags = resolveModeFlags(rawOptions, defaults);
 
   const providerContext = resolveProviderContext({
@@ -326,11 +268,7 @@ async function runSingleTurn(
         yoloMode: false,
         acceptEdits: options.acceptEdits,
         reviewToolSafety: options.autoMode
-          ? createProviderToolSafetyReviewer(
-              options.provider,
-              options.model,
-              options.baseUrl,
-            )
+          ? createProviderToolSafetyReviewer(options.provider, options.model, options.baseUrl)
           : undefined,
         requestToolApproval:
           options.yolo || (process.stdin.isTTY && process.stdout.isTTY)
@@ -343,10 +281,7 @@ async function runSingleTurn(
           : (event) => {
               if (event.type === "tool_start") {
                 process.stdout.write(`\n${chalk.dim(`· ${event.summary}`)}\n`);
-              } else if (
-                event.type === "tool_result" &&
-                event.summary.startsWith("Denied ")
-              ) {
+              } else if (event.type === "tool_result" && event.summary.startsWith("Denied ")) {
                 process.stdout.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
               }
             },
@@ -378,11 +313,7 @@ async function runSingleTurn(
       return;
     }
 
-    const reviewToolSafety = createToolSafetyReviewer(
-      apiKey,
-      options.model,
-      options.baseUrl,
-    );
+    const reviewToolSafety = createToolSafetyReviewer(apiKey, options.model, options.baseUrl);
     const resolvedModes = getEffectiveModes(options, session);
     const result = await runAgentTurn({
       apiKey,
@@ -410,10 +341,7 @@ async function runSingleTurn(
               return;
             }
 
-            if (
-              event.type === "tool_result" &&
-              event.summary.startsWith("Denied ")
-            ) {
+            if (event.type === "tool_result" && event.summary.startsWith("Denied ")) {
               process.stdout.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
             }
           },
@@ -457,9 +385,7 @@ async function runSingleTurn(
   }
 }
 
-async function resolveSession(
-  options: ChatOptions,
-): Promise<StoredChatSession> {
+async function resolveSession(options: ChatOptions): Promise<StoredChatSession> {
   const currentCwd = cwd();
 
   if (options.resume) {
@@ -508,10 +434,7 @@ async function resolveSession(
   saveSession(session);
   return session;
 }
-function parseIntegerOption(
-  value: string | undefined,
-  optionName: string,
-): number | undefined {
+function parseIntegerOption(value: string | undefined, optionName: string): number | undefined {
   if (!value) {
     return undefined;
   }
@@ -632,14 +555,8 @@ function resolveModeFlags(
 }
 
 function getEffectiveModes(
-  options: Pick<
-    ChatOptions,
-    "autoMode" | "yoloMode" | "planMode" | "acceptEdits" | "modeOverride"
-  >,
-  session: Pick<
-    StoredChatSession,
-    "autoMode" | "yoloMode" | "planMode" | "acceptEdits"
-  >,
+  options: Pick<ChatOptions, "autoMode" | "yoloMode" | "planMode" | "acceptEdits" | "modeOverride">,
+  session: Pick<StoredChatSession, "autoMode" | "yoloMode" | "planMode" | "acceptEdits">,
 ): {
   autoMode: boolean;
   yoloMode: boolean;
@@ -668,9 +585,7 @@ function createToolSafetyReviewer(
   model: string,
   baseUrl?: string,
 ): (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult> {
-  return async (
-    request: ToolApprovalRequest,
-  ): Promise<ToolSafetyReviewResult> => {
+  return async (request: ToolApprovalRequest): Promise<ToolSafetyReviewResult> => {
     try {
       const response = await createResponse({
         apiKey,
@@ -693,8 +608,7 @@ function createToolSafetyReviewer(
         maxOutputTokens: 120,
         toolChoice: "none",
       });
-      const verdict =
-        extractOutputText(response).trim() || "UNSAFE: Empty review response.";
+      const verdict = extractOutputText(response).trim() || "UNSAFE: Empty review response.";
       const normalizedVerdict = verdict.toUpperCase();
       return {
         safe: normalizedVerdict.startsWith("SAFE:"),
@@ -717,9 +631,7 @@ function createProviderToolSafetyReviewer(
   model: string,
   baseUrl?: string,
 ): (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult> {
-  return async (
-    request: ToolApprovalRequest,
-  ): Promise<ToolSafetyReviewResult> => {
+  return async (request: ToolApprovalRequest): Promise<ToolSafetyReviewResult> => {
     try {
       const result = await generateProviderText({
         provider,
@@ -753,11 +665,8 @@ function createProviderToolSafetyReviewer(
   };
 }
 
-async function promptForToolApproval(
-  request: ToolApprovalRequest,
-): Promise<boolean> {
-  const detailText =
-    request.details.length > 0 ? `\n${request.details.join("\n")}` : "";
+async function promptForToolApproval(request: ToolApprovalRequest): Promise<boolean> {
+  const detailText = request.details.length > 0 ? `\n${request.details.join("\n")}` : "";
   return select<boolean>({
     message: `${request.title}\n${request.reason}\n${request.toolName}: ${request.summary}${detailText}`,
     choices: [
@@ -775,8 +684,6 @@ async function promptForToolApproval(
   });
 }
 
-async function allowAllToolApprovals(
-  _request: ToolApprovalRequest,
-): Promise<boolean> {
+async function allowAllToolApprovals(_request: ToolApprovalRequest): Promise<boolean> {
   return true;
 }

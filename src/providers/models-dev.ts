@@ -1,7 +1,4 @@
-import {
-  MODELS_DEV_PROVIDERS,
-  type ModelsDevGeneratedProvider,
-} from "./models-dev.generated.ts";
+import { MODELS_DEV_PROVIDERS, type ModelsDevGeneratedProvider } from "./models-dev.generated.ts";
 
 export type ProviderRuntimeKind =
   | "flixa"
@@ -54,15 +51,10 @@ const OPENAI_COMPATIBLE_NPM_PACKAGES = new Set([
 ]);
 
 const PROVIDER_CATALOG = new Map<string, ProviderCatalogRecord>(
-  MODELS_DEV_PROVIDERS.map((provider) => [
-    provider.id,
-    createCatalogRecord(provider),
-  ]),
+  MODELS_DEV_PROVIDERS.map((provider) => [provider.id, createCatalogRecord(provider)]),
 );
 
-export function getProviderCatalogRecord(
-  providerId: string,
-): ProviderCatalogRecord | undefined {
+export function getProviderCatalogRecord(providerId: string): ProviderCatalogRecord | undefined {
   return PROVIDER_CATALOG.get(providerId);
 }
 
@@ -70,9 +62,7 @@ export function listProviderCatalogRecords(): ProviderCatalogRecord[] {
   return [...PROVIDER_CATALOG.values()];
 }
 
-export function resolveCatalogBaseUrl(
-  provider: ProviderCatalogRecord,
-): string | undefined {
+export function resolveCatalogBaseUrl(provider: ProviderCatalogRecord): string | undefined {
   const templatedUrl = provider.api;
   if (templatedUrl) {
     const resolved = resolveEnvironmentTemplate(templatedUrl);
@@ -84,16 +74,12 @@ export function resolveCatalogBaseUrl(
   return FALLBACK_BASE_URLS[provider.id];
 }
 
-function createCatalogRecord(
-  provider: ModelsDevGeneratedProvider,
-): ProviderCatalogRecord {
+function createCatalogRecord(provider: ModelsDevGeneratedProvider): ProviderCatalogRecord {
   const api = provider.api;
   const runtime = inferRuntime(provider);
-  const defaultBaseUrl = api && !hasEnvironmentTemplate(api)
-    ? api
-    : FALLBACK_BASE_URLS[provider.id];
-  const baseUrlRequired =
-    runtime === "openai-chat" && !defaultBaseUrl;
+  const defaultBaseUrl =
+    api && !hasEnvironmentTemplate(api) ? api : FALLBACK_BASE_URLS[provider.id];
+  const baseUrlRequired = runtime === "openai-chat" && !defaultBaseUrl;
 
   return {
     id: provider.id,
@@ -109,9 +95,7 @@ function createCatalogRecord(
   };
 }
 
-function inferRuntime(
-  provider: ModelsDevGeneratedProvider,
-): ProviderRuntimeKind {
+function inferRuntime(provider: ModelsDevGeneratedProvider): ProviderRuntimeKind {
   if (
     provider.npm.includes("google-vertex") ||
     provider.npm.includes("amazon-bedrock") ||
@@ -142,18 +126,13 @@ function inferRuntime(
   return "external";
 }
 
-function inferApiKeyEnvNames(
-  provider: ModelsDevGeneratedProvider,
-): string[] {
+function inferApiKeyEnvNames(provider: ModelsDevGeneratedProvider): string[] {
   const templateVariables = new Set(
-    [...(provider.api?.matchAll(/\$\{([A-Z0-9_]+)\}/g) ?? [])].map(
-      (match) => match[1],
-    ),
+    [...(provider.api?.matchAll(/\$\{([A-Z0-9_]+)\}/g) ?? [])].map((match) => match[1]),
   );
   const candidates = provider.env.filter(
     (name) =>
-      !templateVariables.has(name) &&
-      /(KEY|TOKEN|SECRET|PASSWORD|PAT|CREDENTIAL)/i.test(name),
+      !templateVariables.has(name) && /(KEY|TOKEN|SECRET|PASSWORD|PAT|CREDENTIAL)/i.test(name),
   );
 
   return candidates.length > 0 ? candidates : provider.env.slice(0, 1);

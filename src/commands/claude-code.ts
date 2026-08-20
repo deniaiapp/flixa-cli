@@ -4,11 +4,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { getApiKey } from "../auth/service.ts";
 import { getDefaultProvider, getPersistedProviderBaseUrl } from "../config/store.ts";
-import {
-  getProviderDefinition,
-  isProviderId,
-  type ProviderId,
-} from "../providers/registry.ts";
+import { getProviderDefinition, isProviderId, type ProviderId } from "../providers/registry.ts";
 import { readJson, writeJson, updateField } from "./utils.ts";
 import type { Command } from "commander";
 
@@ -37,8 +33,7 @@ export function registerClaudeCodeCommand(program: Command): void {
       const apiKey = getApiKey(provider);
       if (!apiKey) {
         console.error(
-          chalk.red("✗ Not logged in.") +
-            ` Run \`flixa login --provider ${provider}\` first.`,
+          chalk.red("✗ Not logged in.") + ` Run \`flixa login --provider ${provider}\` first.`,
         );
         process.exit(1);
       }
@@ -62,7 +57,12 @@ export function registerClaudeCodeCommand(program: Command): void {
       console.log(chalk.bold("\n~/.claude.json"));
       const claudeJson = readJsonOrExit(CLAUDE_JSON, "~/.claude.json");
 
-      const r1 = await updateField(claudeJson, "hasCompletedOnboarding", true, "hasCompletedOnboarding");
+      const r1 = await updateField(
+        claudeJson,
+        "hasCompletedOnboarding",
+        true,
+        "hasCompletedOnboarding",
+      );
       const r2 = await updateField(claudeJson, "primaryApiKey", apiKey, "primaryApiKey");
 
       if (r1.changed || r2.changed) {
@@ -87,7 +87,12 @@ export function registerClaudeCodeCommand(program: Command): void {
       if (claudeCodeEnv.baseUrlEnv) {
         const baseUrl = getPersistedProviderBaseUrl(provider) ?? providerDefinition.defaultBaseUrl;
         if (baseUrl) {
-          const r3 = await updateField(env, claudeCodeEnv.baseUrlEnv, baseUrl, claudeCodeEnv.baseUrlEnv);
+          const r3 = await updateField(
+            env,
+            claudeCodeEnv.baseUrlEnv,
+            baseUrl,
+            claudeCodeEnv.baseUrlEnv,
+          );
           settingsChanged = settingsChanged || r3.changed;
         }
       }
@@ -119,7 +124,11 @@ export function registerClaudeCodeCommand(program: Command): void {
       }
 
       if (!options.dryRun && totalChanged > 0) {
-        console.log(chalk.dim("Backups created as *.bak next to changed Claude files when originals existed."));
+        console.log(
+          chalk.dim(
+            "Backups created as *.bak next to changed Claude files when originals existed.",
+          ),
+        );
       }
 
       console.log();

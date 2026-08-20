@@ -1,17 +1,8 @@
-import {
-  generateText,
-  jsonSchema,
-  streamText,
-  tool,
-  type ModelMessage,
-} from "ai";
+import { generateText, jsonSchema, streamText, tool, type ModelMessage } from "ai";
 import { createOpenResponses } from "@ai-sdk/open-responses";
 import { getApiKey } from "../auth/service.ts";
 import { getDefaultProvider } from "../config/store.ts";
-import {
-  formatFlixaHttpError,
-  rethrowAsUserFacingFlixaError,
-} from "../http/flixaApiErrors.ts";
+import { formatFlixaHttpError, rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
 import {
   createFlixaFetch,
   flixaFetch,
@@ -21,9 +12,7 @@ import {
 export const DEFAULT_FLIXA_BASE_URL =
   process.env.FLIXA_BASE_URL?.trim() || "https://api.flixa.engineer/v1/agent";
 export const DEFAULT_FLIXA_MODEL =
-  process.env.FLIXA_MODEL?.trim() ||
-  process.env.OPENAI_MODEL?.trim() ||
-  "openai/gpt-5.6-sol";
+  process.env.FLIXA_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "openai/gpt-5.6-sol";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -41,9 +30,7 @@ export interface FunctionCallOutputInputItem {
   output: string;
 }
 
-export type ResponseInputItem =
-  | ResponseMessageInputItem
-  | FunctionCallOutputInputItem;
+export type ResponseInputItem = ResponseMessageInputItem | FunctionCallOutputInputItem;
 
 export interface FunctionToolDefinition {
   type: "function";
@@ -187,14 +174,11 @@ export async function fetchDeniUsage(options: {
   apiKey: string;
   baseUrl?: string;
 }): Promise<DeniUsageInfo> {
-  const response = await flixaFetch(
-    `${resolveApiRoot(options.baseUrl)}/deni/usage`,
-    {
-      headers: {
-        Authorization: `Bearer ${options.apiKey}`,
-      },
+  const response = await flixaFetch(`${resolveApiRoot(options.baseUrl)}/deni/usage`, {
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
     },
-  );
+  });
 
   if (!response.ok) {
     throw new Error(await formatFlixaHttpError(response));
@@ -203,9 +187,7 @@ export async function fetchDeniUsage(options: {
   return (await response.json()) as DeniUsageInfo;
 }
 
-export async function createResponse(
-  options: CreateResponseOptions,
-): Promise<FlixaResponse> {
+export async function createResponse(options: CreateResponseOptions): Promise<FlixaResponse> {
   if (options.previousResponseId) {
     throw new Error(
       "previousResponseId is not supported here. Resend the full conversation instead.",
@@ -304,9 +286,7 @@ export async function generateResponseTurn(options: {
         callId: toolCall.toolCallId,
         name: toolCall.toolName,
         argumentsText:
-          typeof toolCall.input === "string"
-            ? toolCall.input
-            : JSON.stringify(toolCall.input),
+          typeof toolCall.input === "string" ? toolCall.input : JSON.stringify(toolCall.input),
       })),
       responseMessages: result.response.messages as ModelMessage[],
       response: coerceFlixaResponse(
@@ -318,9 +298,7 @@ export async function generateResponseTurn(options: {
           callId: toolCall.toolCallId,
           name: toolCall.toolName,
           argumentsText:
-            typeof toolCall.input === "string"
-              ? toolCall.input
-              : JSON.stringify(toolCall.input),
+            typeof toolCall.input === "string" ? toolCall.input : JSON.stringify(toolCall.input),
         })),
       ),
     };
@@ -329,11 +307,7 @@ export async function generateResponseTurn(options: {
   }
 }
 
-export function createResponsesModel(options: {
-  apiKey: string;
-  model: string;
-  baseUrl?: string;
-}) {
+export function createResponsesModel(options: { apiKey: string; model: string; baseUrl?: string }) {
   return createOpenResponses({
     name: "flixa",
     url: `${resolveBaseUrl(options.baseUrl)}/responses`,
@@ -361,9 +335,7 @@ export function buildAiSdkTools(
   );
 }
 
-export function chatHistoryToModelMessages(
-  history: ChatMessage[],
-): ModelMessage[] {
+export function chatHistoryToModelMessages(history: ChatMessage[]): ModelMessage[] {
   return history.map((message) => ({
     role: message.role,
     content: message.content,
@@ -399,9 +371,7 @@ export function extractThinkingText(response: FlixaResponse): string {
   return extractResponseDisplayParts(response).thinkingText;
 }
 
-export function extractFunctionCalls(
-  response: FlixaResponse,
-): Array<{
+export function extractFunctionCalls(response: FlixaResponse): Array<{
   id?: string;
   callId: string;
   name: string;
@@ -418,8 +388,7 @@ export function extractFunctionCalls(
       id: item.id,
       callId: item.call_id as string,
       name: item.name as string,
-      argumentsText:
-        typeof item.arguments === "string" ? item.arguments : "{}",
+      argumentsText: typeof item.arguments === "string" ? item.arguments : "{}",
     }));
 }
 
@@ -508,9 +477,7 @@ function isFlixaResponse(value: unknown): value is FlixaResponse {
   return typeof value === "object" && value !== null;
 }
 
-function extractResponseDisplayParts(
-  response: FlixaResponse,
-): FlixaResponseDisplayParts {
+function extractResponseDisplayParts(response: FlixaResponse): FlixaResponseDisplayParts {
   const outputItems = response.output ?? [];
   const thinkingSegments: string[] = [];
   const assistantSegments: string[] = [];
@@ -521,10 +488,7 @@ function extractResponseDisplayParts(
     const summary = item.summary ?? [];
 
     if (itemType === "reasoning" || itemType === "thinking") {
-      thinkingSegments.push(
-        ...extractTextSegments(summary),
-        ...extractTextSegments(content),
-      );
+      thinkingSegments.push(...extractTextSegments(summary), ...extractTextSegments(content));
       continue;
     }
 
@@ -535,10 +499,7 @@ function extractResponseDisplayParts(
     }
 
     assistantSegments.push(...extractNonThinkingContent(content));
-    thinkingSegments.push(
-      ...extractTextSegments(summary),
-      ...extractThinkingContent(content),
-    );
+    thinkingSegments.push(...extractTextSegments(summary), ...extractThinkingContent(content));
   }
 
   if (
@@ -555,37 +516,25 @@ function extractResponseDisplayParts(
   };
 }
 
-function extractNonThinkingContent(
-  contentItems: FlixaResponseOutputContent[],
-): string[] {
+function extractNonThinkingContent(contentItems: FlixaResponseOutputContent[]): string[] {
   return contentItems
     .filter((content) => !isThinkingType(content.type))
     .flatMap((content) =>
-      typeof content.text === "string" && content.text.length > 0
-        ? [content.text]
-        : [],
+      typeof content.text === "string" && content.text.length > 0 ? [content.text] : [],
     );
 }
 
-function extractThinkingContent(
-  contentItems: FlixaResponseOutputContent[],
-): string[] {
+function extractThinkingContent(contentItems: FlixaResponseOutputContent[]): string[] {
   return contentItems
     .filter((content) => isThinkingType(content.type))
     .flatMap((content) =>
-      typeof content.text === "string" && content.text.length > 0
-        ? [content.text]
-        : [],
+      typeof content.text === "string" && content.text.length > 0 ? [content.text] : [],
     );
 }
 
-function extractTextSegments(
-  contentItems: FlixaResponseOutputContent[],
-): string[] {
+function extractTextSegments(contentItems: FlixaResponseOutputContent[]): string[] {
   return contentItems.flatMap((content) =>
-    typeof content.text === "string" && content.text.length > 0
-      ? [content.text]
-      : [],
+    typeof content.text === "string" && content.text.length > 0 ? [content.text] : [],
   );
 }
 

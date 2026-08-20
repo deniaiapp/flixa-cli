@@ -1,10 +1,7 @@
 import chalk from "chalk";
 import { select } from "@inquirer/prompts";
 import type { Command } from "commander";
-import {
-  fetchAvailableModels,
-  type FlixaModelDefinition,
-} from "../flixa/api.ts";
+import { fetchAvailableModels, type FlixaModelDefinition } from "../flixa/api.ts";
 import { getPersistedModel, setPersistedModel } from "../config/store.ts";
 import {
   listProviderModelOptions,
@@ -22,10 +19,7 @@ export function registerModelCommand(program: Command): void {
     .command("model")
     .description("Select or set the default model for a provider")
     .option("-p, --provider <provider>", "Provider to configure")
-    .option(
-      "--base-url <url>",
-      "Override the API base URL for providers that support it",
-    )
+    .option("--base-url <url>", "Override the API base URL for providers that support it")
     .argument("[modelId]", "Model id to set directly")
     .action(async (modelId: string | undefined, options: ModelCommandOptions) => {
       const context = resolveProviderContext({
@@ -48,7 +42,7 @@ export function registerModelCommand(program: Command): void {
             baseUrl: context.baseUrl,
           });
           const selectedModelId = modelId?.trim()
-            ? resolveRequestedProviderModel(providerModels, modelId.trim())?.id ?? modelId.trim()
+            ? (resolveRequestedProviderModel(providerModels, modelId.trim())?.id ?? modelId.trim())
             : (await promptForProviderModelSelection(context.provider, providerModels)).id;
           setPersistedModel(selectedModelId, context.provider);
           console.log(
@@ -104,9 +98,7 @@ async function promptForModelSelection(
       value: model.id,
       description:
         model.description ||
-        [model.id, ...((Array.isArray(model.tags) ? model.tags : []))]
-          .filter(Boolean)
-          .join(" · "),
+        [model.id, ...(Array.isArray(model.tags) ? model.tags : [])].filter(Boolean).join(" · "),
     })),
   });
 
@@ -126,10 +118,7 @@ async function promptForProviderModelSelection(
   const selectedId = await select({
     message: `Select the default model for ${provider}`,
     choices: models.map((model) => ({
-      name:
-        model.id === currentModel
-          ? `${model.label} [current]`
-          : model.label,
+      name: model.id === currentModel ? `${model.label} [current]` : model.label,
       value: model.id,
       description: model.description || undefined,
     })),
@@ -163,11 +152,7 @@ function resolveRequestedModel(
   }
 
   const requestedSuffix = stripModelProvider(modelId);
-  return (
-    models.find(
-      (model) => stripModelProvider(model.id) === requestedSuffix,
-    ) ?? null
-  );
+  return models.find((model) => stripModelProvider(model.id) === requestedSuffix) ?? null;
 }
 
 function stripModelProvider(modelId: string): string {

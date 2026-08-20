@@ -19,7 +19,7 @@ export async function updateField(
   obj: Record<string, unknown>,
   key: string,
   newValue: unknown,
-  label: string
+  label: string,
 ): Promise<{ changed: boolean; skipped: boolean }> {
   const current = obj[key];
 

@@ -34,10 +34,7 @@ import {
   type ProviderId,
 } from "./registry.ts";
 import type { ChatMessage } from "../flixa/api.ts";
-import {
-  createFlixaFetch,
-  getFlixaCliClientHeaders,
-} from "../http/flixaClientHeaders.ts";
+import { createFlixaFetch, getFlixaCliClientHeaders } from "../http/flixaClientHeaders.ts";
 import { rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
 import { cwd } from "node:process";
 
@@ -70,9 +67,7 @@ export interface SharedAgentRunOptions {
   planMode?: boolean;
   acceptEdits?: boolean;
   requestToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
-  reviewToolSafety?: (
-    request: ToolApprovalRequest,
-  ) => Promise<ToolSafetyReviewResult>;
+  reviewToolSafety?: (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult>;
   onEvent?: (event: SharedAgentRunEvent) => void;
 }
 
@@ -176,9 +171,7 @@ export function resolveProviderContext(
     getPersistedModel() ||
     "gpt-4.1";
   const baseUrl =
-    options.baseUrl?.trim() ||
-    getPersistedProviderBaseUrl(provider) ||
-    definition.defaultBaseUrl;
+    options.baseUrl?.trim() || getPersistedProviderBaseUrl(provider) || definition.defaultBaseUrl;
 
   const apiKey = resolveApiKeyForProvider(provider);
 
@@ -215,9 +208,7 @@ export function resolveApiKeyForProvider(provider: ProviderId): string | null {
   return getApiKey(provider);
 }
 
-export function createLanguageModel(
-  context: ResolvedProviderContext,
-): LanguageModel {
+export function createLanguageModel(context: ResolvedProviderContext): LanguageModel {
   const definition = getProviderDefinition(context.provider);
   if (definition.baseUrlRequired && !context.baseUrl) {
     throw new Error(
@@ -233,7 +224,9 @@ export function createLanguageModel(
 
   const apiKey = context.apiKey;
   if (!apiKey) {
-    throw new Error(`No API key configured for ${context.displayName}. Run \`flixa login --provider ${context.provider}\` first.`);
+    throw new Error(
+      `No API key configured for ${context.displayName}. Run \`flixa login --provider ${context.provider}\` first.`,
+    );
   }
 
   switch (context.runtime) {
@@ -241,9 +234,7 @@ export function createLanguageModel(
     case "openai-chat": {
       const openai = createOpenAI({
         apiKey,
-        ...(context.baseUrl
-          ? { baseURL: normalizeOpenAiBaseUrl(context.baseUrl) }
-          : {}),
+        ...(context.baseUrl ? { baseURL: normalizeOpenAiBaseUrl(context.baseUrl) } : {}),
         ...(context.provider === "openrouter"
           ? {
               headers: {
@@ -435,11 +426,7 @@ export async function runSharedAgentTurn(
               throw error;
             }
             const message = error instanceof Error ? error.message : String(error);
-            const failed = createSharedFailedToolResult(
-              definition.name,
-              summary,
-              message,
-            );
+            const failed = createSharedFailedToolResult(definition.name, summary, message);
             options.onEvent?.({
               type: "tool_result",
               toolName: definition.name,
@@ -685,9 +672,7 @@ async function fetchOpenRouterModelOptions(
   return finalizeProviderModelOptions(models, context);
 }
 
-function normalizeOpenAiCompatibleModel(
-  model: OpenAiCompatibleModel,
-): ProviderModelOption | null {
+function normalizeOpenAiCompatibleModel(model: OpenAiCompatibleModel): ProviderModelOption | null {
   const id = typeof model.id === "string" ? model.id.trim() : "";
   if (!id || !isLikelyTextModelForOpenAiCompatibleProvider(id)) {
     return null;
@@ -706,9 +691,7 @@ function normalizeOpenAiCompatibleModel(
   };
 }
 
-function normalizeAnthropicModel(
-  model: AnthropicProviderModel,
-): ProviderModelOption | null {
+function normalizeAnthropicModel(model: AnthropicProviderModel): ProviderModelOption | null {
   const id = typeof model.id === "string" ? model.id.trim() : "";
   if (!id) {
     return null;
@@ -728,9 +711,7 @@ function normalizeAnthropicModel(
   };
 }
 
-function normalizeGeminiModel(
-  model: GeminiProviderModel,
-): ProviderModelOption | null {
+function normalizeGeminiModel(model: GeminiProviderModel): ProviderModelOption | null {
   const supportedMethods = Array.isArray(model.supportedGenerationMethods)
     ? model.supportedGenerationMethods
     : [];
@@ -760,9 +741,7 @@ function normalizeGeminiModel(
   };
 }
 
-function normalizeOpenRouterModel(
-  model: OpenRouterProviderModel,
-): ProviderModelOption | null {
+function normalizeOpenRouterModel(model: OpenRouterProviderModel): ProviderModelOption | null {
   const id = typeof model.id === "string" ? model.id.trim() : "";
   if (!id) {
     return null;
@@ -778,8 +757,7 @@ function normalizeOpenRouterModel(
     return null;
   }
 
-  const label =
-    typeof model.name === "string" && model.name.trim() ? model.name.trim() : id;
+  const label = typeof model.name === "string" && model.name.trim() ? model.name.trim() : id;
   const createdAt =
     typeof model.created === "number" && Number.isFinite(model.created)
       ? model.created * 1000
@@ -804,10 +782,10 @@ function finalizeProviderModelOptions(
     }
   }
 
-  const result = [...uniqueModels.values()].sort((left, right) =>
-    (right.sortKey ?? Number.NEGATIVE_INFINITY) -
-      (left.sortKey ?? Number.NEGATIVE_INFINITY) ||
-    left.id.localeCompare(right.id),
+  const result = [...uniqueModels.values()].sort(
+    (left, right) =>
+      (right.sortKey ?? Number.NEGATIVE_INFINITY) - (left.sortKey ?? Number.NEGATIVE_INFINITY) ||
+      left.id.localeCompare(right.id),
   );
 
   if (result.length > 0) {
@@ -823,10 +801,7 @@ function finalizeProviderModelOptions(
   ];
 }
 
-async function fetchProviderJson<T>(options: {
-  url: string;
-  headers?: HeadersInit;
-}): Promise<T> {
+async function fetchProviderJson<T>(options: { url: string; headers?: HeadersInit }): Promise<T> {
   const response = await fetch(options.url, {
     headers: options.headers,
   });
@@ -849,8 +824,7 @@ async function formatProviderApiError(response: Response): Promise<string> {
     const payload = JSON.parse(text) as unknown;
     if (payload && typeof payload === "object") {
       const candidate = payload as Record<string, unknown>;
-      const directMessage =
-        typeof candidate["message"] === "string" ? candidate["message"] : null;
+      const directMessage = typeof candidate["message"] === "string" ? candidate["message"] : null;
       if (directMessage) {
         return directMessage;
       }
@@ -859,9 +833,7 @@ async function formatProviderApiError(response: Response): Promise<string> {
       if (errorValue && typeof errorValue === "object") {
         const errorRecord = errorValue as Record<string, unknown>;
         const nestedMessage =
-          typeof errorRecord["message"] === "string"
-            ? errorRecord["message"]
-            : null;
+          typeof errorRecord["message"] === "string" ? errorRecord["message"] : null;
         if (nestedMessage) {
           return nestedMessage;
         }
@@ -895,44 +867,6 @@ function resolveAnthropicModelsUrl(baseUrl?: string): string {
   return resolved.endsWith("/v1") ? `${resolved}/models` : `${resolved}/v1/models`;
 }
 
-function compactModelDescription(
-  description: string,
-  fallbackParts: Array<string | null>,
-  fallback: string,
-): string {
-  const normalizedDescription = description.replace(/\s+/g, " ").trim();
-  if (normalizedDescription) {
-    return normalizedDescription;
-  }
-
-  const meta = fallbackParts.filter(Boolean).join(" · ");
-  return meta || fallback;
-}
-
-function formatProviderModelDescription(options: {
-  createdAt?: number;
-  fallbackParts: Array<string | null>;
-}): string {
-  const parts = [
-    formatModelDate(options.createdAt),
-    ...options.fallbackParts.filter(Boolean),
-  ];
-  return parts.join(" · ");
-}
-
-function formatModelDate(value?: number): string | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date.toISOString().slice(0, 10);
-}
-
 function parseDateValue(value: unknown): number | undefined {
   if (typeof value !== "string" || !value.trim()) {
     return undefined;
@@ -940,15 +874,6 @@ function parseDateValue(value: unknown): number | undefined {
 
   const timestamp = Date.parse(value);
   return Number.isNaN(timestamp) ? undefined : timestamp;
-}
-
-function truncateSingleLine(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function isLikelyTextModelForOpenAiCompatibleProvider(modelId: string): boolean {

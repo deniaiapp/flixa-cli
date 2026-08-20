@@ -47,10 +47,7 @@ export function mergeFlixaCliClientHeaders(
  * Also suitable as a custom `fetch` for AI SDKs: they often overwrite
  * User-Agent with `ai/...`; this re-applies Flixa CLI signals last.
  */
-export async function flixaFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
+export async function flixaFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return fetch(input, {
     ...init,
     headers: mergeFlixaCliClientHeaders(init?.headers),

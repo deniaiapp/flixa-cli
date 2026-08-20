@@ -2,16 +2,9 @@ import chalk from "chalk";
 import { cwd } from "node:process";
 import type { Command } from "commander";
 import { getDefaultProvider } from "../config/store.ts";
-import {
-  buildShareCard,
-  copyToClipboard,
-  writeShareCard,
-} from "../runs/share-card.ts";
+import { buildShareCard, copyToClipboard, writeShareCard } from "../runs/share-card.ts";
 import { renderShareCard } from "../ui/share-card.ts";
-import {
-  loadLatestSessionForCwd,
-  loadSessionById,
-} from "../sessions/store.ts";
+import { loadLatestSessionForCwd, loadSessionById } from "../sessions/store.ts";
 
 type ShareOptions = {
   session?: string;
@@ -63,11 +56,7 @@ export function registerShareCommand(program: Command): void {
 
       let outputPath: string | undefined;
       if (resolvedOptions.output) {
-        outputPath = writeShareCard(
-          card,
-          resolvedOptions.output,
-          session.cwd || cwd(),
-        );
+        outputPath = writeShareCard(card, resolvedOptions.output, session.cwd || cwd());
       }
       const clipboard = copyToClipboard(card);
 

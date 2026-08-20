@@ -34,18 +34,9 @@ export function registerProvidersCommand(program: Command): void {
         };
       });
 
-      const providerWidth = Math.max(
-        "Provider".length,
-        ...rows.map((row) => row.provider.length),
-      );
-      const statusWidth = Math.max(
-        "Status".length,
-        ...rows.map((row) => row.status.length),
-      );
-      const defaultWidth = Math.max(
-        "Default".length,
-        ...rows.map((row) => row.default.length),
-      );
+      const providerWidth = Math.max("Provider".length, ...rows.map((row) => row.provider.length));
+      const statusWidth = Math.max("Status".length, ...rows.map((row) => row.status.length));
+      const defaultWidth = Math.max("Default".length, ...rows.map((row) => row.default.length));
       console.log(
         chalk.bold(
           `${"Provider".padEnd(providerWidth)}  ${"Status".padEnd(statusWidth)}  ${"Default".padEnd(defaultWidth)}  Base URL`,
@@ -63,7 +54,9 @@ export function registerProvidersCommand(program: Command): void {
     .description("Show the current default provider")
     .action(() => {
       const provider = getDefaultProvider();
-      console.log(`${chalk.green("Default provider:")} ${getProviderDefinition(provider).displayName} ${chalk.dim(`(${provider})`)}`);
+      console.log(
+        `${chalk.green("Default provider:")} ${getProviderDefinition(provider).displayName} ${chalk.dim(`(${provider})`)}`,
+      );
     });
 
   providers
@@ -72,7 +65,9 @@ export function registerProvidersCommand(program: Command): void {
     .action((rawProvider: string) => {
       const provider = parseProvider(rawProvider);
       setDefaultProvider(provider);
-      console.log(`${chalk.green("✓ Default provider set:")} ${getProviderDefinition(provider).displayName}`);
+      console.log(
+        `${chalk.green("✓ Default provider set:")} ${getProviderDefinition(provider).displayName}`,
+      );
     });
 }
 

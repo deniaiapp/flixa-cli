@@ -9,9 +9,18 @@ const packageJson = readJson(join(root, "package.json"));
 const manifest = readJson(join(root, "openclaw.plugin.json"));
 const entry = readFileSync(join(root, "src", "index.ts"), "utf8");
 
-assert(packageJson.openclaw?.extensions?.[0] === "./src/index.ts", "source extension entry mismatch");
-assert(packageJson.openclaw?.runtimeExtensions?.[0] === "./dist/index.js", "runtime extension entry mismatch");
-assert(packageJson.version === rootPackage.version, "OpenClaw plugin version must match Flixa CLI version");
+assert(
+  packageJson.openclaw?.extensions?.[0] === "./src/index.ts",
+  "source extension entry mismatch",
+);
+assert(
+  packageJson.openclaw?.runtimeExtensions?.[0] === "./dist/index.js",
+  "runtime extension entry mismatch",
+);
+assert(
+  packageJson.version === rootPackage.version,
+  "OpenClaw plugin version must match Flixa CLI version",
+);
 assert(manifest.id === "flixa", "manifest id must be flixa");
 assert(manifest.cliBackends?.includes("flixa"), "manifest must own the flixa CLI backend");
 assert(entry.includes("registerCliBackend"), "plugin must register a CLI backend");

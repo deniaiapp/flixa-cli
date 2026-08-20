@@ -71,11 +71,7 @@ const BUILTIN_PROVIDERS: Record<string, ProviderDefinition> = {
     authType: "apiKey",
     runtime: "google",
     defaultModel: "gemini-2.5-pro",
-    apiKeyEnvNames: [
-      "GOOGLE_API_KEY",
-      "GOOGLE_GENERATIVE_AI_API_KEY",
-      "GEMINI_API_KEY",
-    ],
+    apiKeyEnvNames: ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"],
     source: "builtin",
   },
   openrouter: {

@@ -7,7 +7,10 @@ This file provides guidance to coding agents when working with this repository.
 - `bun install` — install dependencies
 - `bun run dev` — run the CLI directly from `src/index.ts`
 - `bun run build` — bundle to `dist/` and prepare the published package
-- No test runner or lint script is configured; do not claim tests/lint passed unless you ran some other concrete verification
+- `bun run lint` — run oxlint over CLI, scripts, and OpenClaw integration sources
+- `bun run format:check` — verify oxfmt formatting
+- `bun run check` — typecheck, lint, format check, build, and integration smoke
+- No test runner is configured; do not claim tests passed unless you ran some other concrete verification
 - Useful targeted checks:
   - `bun run src/index.ts --help`
   - `bun run src/index.ts <command> --help`

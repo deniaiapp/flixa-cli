@@ -1,10 +1,4 @@
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  existsSync,
-  appendFileSync,
-} from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import { confirm } from "@inquirer/prompts";
@@ -49,8 +43,7 @@ function upsertFlixaSection(content: string): string {
 
   const afterHeader = idx + header.length;
   const nextSection = content.slice(afterHeader).search(/\n\[/);
-  const end =
-    nextSection === -1 ? content.length : afterHeader + nextSection + 1;
+  const end = nextSection === -1 ? content.length : afterHeader + nextSection + 1;
 
   return content.slice(0, idx) + FLIXA_TOML_SECTION + "\n" + content.slice(end);
 }
@@ -63,12 +56,7 @@ type ShellConfig = {
 
 function detectShellConfig(): ShellConfig {
   if (process.platform === "win32") {
-    const rcFile = join(
-      homedir(),
-      "Documents",
-      "PowerShell",
-      "Microsoft.PowerShell_profile.ps1",
-    );
+    const rcFile = join(homedir(), "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
     return {
       rcFile,
       aliasLine:
@@ -133,9 +121,7 @@ export function registerCodexCommand(program: Command): void {
     .action(async () => {
       const apiKey = getApiKey();
       if (!apiKey) {
-        console.error(
-          chalk.red("✗ Not logged in.") + " Run `flixa login` first.",
-        );
+        console.error(chalk.red("✗ Not logged in.") + " Run `flixa login` first.");
         process.exit(1);
       }
 
@@ -149,12 +135,7 @@ export function registerCodexCommand(program: Command): void {
       // ── ~/.codex/auth.json ───────────────────────────────────────────
       console.log(chalk.bold("\n~/.codex/auth.json"));
       const auth = readJson(CODEX_AUTH_JSON);
-      const r2 = await updateField(
-        auth,
-        "OPENAI_API_KEY",
-        apiKey,
-        "OPENAI_API_KEY",
-      );
+      const r2 = await updateField(auth, "OPENAI_API_KEY", apiKey, "OPENAI_API_KEY");
       if (r2.changed) {
         writeJson(CODEX_AUTH_JSON, auth);
         totalChanged++;
@@ -182,13 +163,9 @@ export function registerCodexCommand(program: Command): void {
       });
 
       if (setAlias) {
-        const rcContent = existsSync(rcFile)
-          ? readFileSync(rcFile, "utf-8")
-          : "";
+        const rcContent = existsSync(rcFile) ? readFileSync(rcFile, "utf-8") : "";
         if (rcContent.includes(aliasLine)) {
-          console.log(
-            chalk.dim(`  ~/${basename(rcFile)}: alias already set, skipping`),
-          );
+          console.log(chalk.dim(`  ~/${basename(rcFile)}: alias already set, skipping`));
         } else {
           const dir = join(rcFile, "..");
           if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

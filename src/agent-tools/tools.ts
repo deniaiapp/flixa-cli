@@ -1,10 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -67,13 +62,11 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           timeout_ms: {
             type: "integer",
-            description:
-              "Optional timeout in milliseconds. Defaults to 30000.",
+            description: "Optional timeout in milliseconds. Defaults to 30000.",
           },
           reason: {
             type: "string",
-            description:
-              "Why this command is needed and why it is safe to run.",
+            description: "Why this command is needed and why it is safe to run.",
           },
         },
         required: ["command", "reason"],
@@ -104,8 +97,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           reason: {
             type: "string",
-            description:
-              "Why this file needs to be read and why the read is safe.",
+            description: "Why this file needs to be read and why the read is safe.",
           },
         },
         required: ["file_path", "reason"],
@@ -133,8 +125,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           reason: {
             type: "string",
-            description:
-              "Why this write is necessary and why it is safe.",
+            description: "Why this write is necessary and why it is safe.",
           },
         },
         required: ["file_path", "content", "reason"],
@@ -170,8 +161,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           reason: {
             type: "string",
-            description:
-              "Why this edit is necessary and why it is safe.",
+            description: "Why this edit is necessary and why it is safe.",
           },
         },
         required: ["file_path", "old_string", "new_string", "reason"],
@@ -184,8 +174,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
     definition: {
       type: "function",
       name: "Grep",
-      description:
-        "Search for a regex pattern in files under the workspace using ripgrep.",
+      description: "Search for a regex pattern in files under the workspace using ripgrep.",
       parameters: {
         type: "object",
         properties: {
@@ -195,8 +184,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           path: {
             type: "string",
-            description:
-              "Optional directory or file path relative to the workspace root.",
+            description: "Optional directory or file path relative to the workspace root.",
           },
           glob: {
             type: "string",
@@ -204,8 +192,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           reason: {
             type: "string",
-            description:
-              "Why this search is needed and why it is safe.",
+            description: "Why this search is needed and why it is safe.",
           },
         },
         required: ["pattern", "reason"],
@@ -218,15 +205,13 @@ export const AGENT_TOOLS: RegisteredTool[] = [
     definition: {
       type: "function",
       name: "Glob",
-      description:
-        "List files in the workspace, optionally filtered by a glob pattern.",
+      description: "List files in the workspace, optionally filtered by a glob pattern.",
       parameters: {
         type: "object",
         properties: {
           pattern: {
             type: "string",
-            description:
-              "Optional glob pattern such as *.ts or src/**/*.tsx.",
+            description: "Optional glob pattern such as *.ts or src/**/*.tsx.",
           },
           path: {
             type: "string",
@@ -234,8 +219,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
           },
           reason: {
             type: "string",
-            description:
-              "Why this file listing is needed and why it is safe.",
+            description: "Why this file listing is needed and why it is safe.",
           },
         },
         required: ["reason"],
@@ -248,8 +232,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
     definition: {
       type: "function",
       name: "GitStatus",
-      description:
-        "Inspect the current git branch and working-tree status without changing files.",
+      description: "Inspect the current git branch and working-tree status without changing files.",
       parameters: {
         type: "object",
         properties: {
@@ -268,8 +251,7 @@ export const AGENT_TOOLS: RegisteredTool[] = [
     definition: {
       type: "function",
       name: "GitDiff",
-      description:
-        "Inspect the current git diff or diff stat without changing files.",
+      description: "Inspect the current git diff or diff stat without changing files.",
       parameters: {
         type: "object",
         properties: {
@@ -310,10 +292,7 @@ export function getAgentToolDefinitions(options?: {
       return false;
     }
 
-    if (
-      !allowFileEdits &&
-      (tool.definition.name === "Write" || tool.definition.name === "Edit")
-    ) {
+    if (!allowFileEdits && (tool.definition.name === "Write" || tool.definition.name === "Edit")) {
       return false;
     }
 
@@ -366,14 +345,10 @@ async function runShellCommand(
     throw new Error(`Command blocked: ${safety.reason}.`);
   }
 
-  const timeoutMs =
-    Math.min(
-      300_000,
-      Math.max(
-        1_000,
-        getOptionalInteger(args, "timeout_ms") ?? DEFAULT_BASH_TIMEOUT_MS,
-      ),
-    );
+  const timeoutMs = Math.min(
+    300_000,
+    Math.max(1_000, getOptionalInteger(args, "timeout_ms") ?? DEFAULT_BASH_TIMEOUT_MS),
+  );
 
   const { executable, executableArgs } = getShellInvocation(command);
 
@@ -394,12 +369,7 @@ async function runShellCommand(
   );
   return {
     output: truncate(output),
-    summary: formatShellResultSummary(
-      command,
-      result.exit_code,
-      result.timed_out,
-      timeoutMs,
-    ),
+    summary: formatShellResultSummary(command, result.exit_code, result.timed_out, timeoutMs),
   };
 }
 
@@ -444,9 +414,7 @@ async function writeFileTool(
   context: ToolExecutionContext,
 ): Promise<ToolHandlerResult> {
   if (!context.allowFileEdits) {
-    throw new Error(
-      "Write is disabled until accept edits or auto mode is enabled.",
-    );
+    throw new Error("Write is disabled until accept edits or auto mode is enabled.");
   }
 
   const filePath = resolveWorkspacePath(
@@ -480,9 +448,7 @@ async function editFileTool(
   context: ToolExecutionContext,
 ): Promise<ToolHandlerResult> {
   if (!context.allowFileEdits) {
-    throw new Error(
-      "Edit is disabled until accept edits or auto mode is enabled.",
-    );
+    throw new Error("Edit is disabled until accept edits or auto mode is enabled.");
   }
 
   const filePath = resolveWorkspacePath(
@@ -499,9 +465,7 @@ async function editFileTool(
     throw new Error("Edit failed: old_string was not found.");
   }
   if (!replaceAll && occurrences > 1) {
-    throw new Error(
-      "Edit failed: old_string matched multiple locations. Use replace_all=true.",
-    );
+    throw new Error("Edit failed: old_string matched multiple locations. Use replace_all=true.");
   }
 
   const updated = replaceAll
@@ -571,14 +535,10 @@ async function globTool(
 
   let files: string[];
   if (pattern) {
-    const result = await runProcess(
-      getRipgrepExecutable(),
-      ["--files", "-g", pattern, root],
-      {
-        cwd: context.workspaceRoot,
-        timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
-      },
-    );
+    const result = await runProcess(getRipgrepExecutable(), ["--files", "-g", pattern, root], {
+      cwd: context.workspaceRoot,
+      timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
+    });
     files = result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -597,9 +557,7 @@ async function globTool(
   };
 }
 
-async function gitStatusTool(
-  context: ToolExecutionContext,
-): Promise<ToolHandlerResult> {
+async function gitStatusTool(context: ToolExecutionContext): Promise<ToolHandlerResult> {
   const result = await runProcess("git", ["status", "--short", "--branch"], {
     cwd: context.workspaceRoot,
     timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
@@ -623,16 +581,22 @@ async function gitDiffTool(
   context: ToolExecutionContext,
 ): Promise<ToolHandlerResult> {
   const commandArgs = ["diff", "--no-ext-diff", "--no-color"];
-  if (Boolean(args["staged"])) {
+  if (args["staged"]) {
     commandArgs.push("--cached");
   }
-  if (Boolean(args["stat_only"])) {
+  if (args["stat_only"]) {
     commandArgs.push("--stat");
   }
 
   const pathValue = getOptionalString(args, "path");
   if (pathValue) {
-    commandArgs.push("--", toWorkspaceRelative(resolveWorkspacePath(pathValue, context.workspaceRoot), context.workspaceRoot));
+    commandArgs.push(
+      "--",
+      toWorkspaceRelative(
+        resolveWorkspacePath(pathValue, context.workspaceRoot),
+        context.workspaceRoot,
+      ),
+    );
   }
 
   const result = await runProcess("git", commandArgs, {
@@ -652,16 +616,11 @@ async function gitDiffTool(
       null,
       2,
     ),
-    summary: pathValue
-      ? `GitDiff inspected ${pathValue}`
-      : "GitDiff inspected the working tree",
+    summary: pathValue ? `GitDiff inspected ${pathValue}` : "GitDiff inspected the working tree",
   };
 }
 
-async function collectFiles(
-  directory: string,
-  workspaceRoot: string,
-): Promise<string[]> {
+async function collectFiles(directory: string, workspaceRoot: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files: string[] = [];
 
@@ -704,9 +663,7 @@ function resolveWorkspacePath(pathValue: string, workspaceRoot: string): string 
     return absolutePath;
   }
 
-  throw new Error(
-    `Path must stay inside the workspace: ${toPortablePath(pathValue)}`,
-  );
+  throw new Error(`Path must stay inside the workspace: ${toPortablePath(pathValue)}`);
 }
 
 function toWorkspaceRelative(pathValue: string, workspaceRoot: string): string {
@@ -714,10 +671,7 @@ function toWorkspaceRelative(pathValue: string, workspaceRoot: string): string {
   return relativePath ? relativePath.replace(/\\/g, "/") : ".";
 }
 
-function getRequiredString(
-  args: Record<string, unknown>,
-  key: string,
-): string {
+function getRequiredString(args: Record<string, unknown>, key: string): string {
   const value = args[key];
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`Missing required string: ${key}`);
@@ -725,22 +679,14 @@ function getRequiredString(
   return value;
 }
 
-function getOptionalString(
-  args: Record<string, unknown>,
-  key: string,
-): string | undefined {
+function getOptionalString(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function getOptionalInteger(
-  args: Record<string, unknown>,
-  key: string,
-): number | undefined {
+function getOptionalInteger(args: Record<string, unknown>, key: string): number | undefined {
   const value = args[key];
-  return typeof value === "number" && Number.isInteger(value)
-    ? value
-    : undefined;
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -771,9 +717,7 @@ function truncate(value: string, maxLength = MAX_TOOL_OUTPUT_CHARS): string {
 function formatInlineCommand(command: string, maxLength = 100): string {
   const singleLine = command.replace(/\s+/g, " ").trim();
   const shortened =
-    singleLine.length > maxLength
-      ? `${singleLine.slice(0, maxLength)}…`
-      : singleLine;
+    singleLine.length > maxLength ? `${singleLine.slice(0, maxLength)}…` : singleLine;
   return JSON.stringify(shortened || command);
 }
 
