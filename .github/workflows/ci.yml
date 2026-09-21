@@ -23,12 +23,12 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-24.04
           - windows-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -39,7 +39,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Check CLI, build, format, and integration contract (Unix)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: bun run check
 
       - name: Check CLI, build, and integration contract (Windows)
@@ -49,12 +49,12 @@ jobs:
   openclaw:
     name: OpenClaw plugin
     needs: flixa
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v6
