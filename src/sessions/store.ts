@@ -93,7 +93,15 @@ export function loadSessionById(sessionId: string): StoredChatSession | null {
 
 export function loadLatestSessionForCwd(cwdValue: string): StoredChatSession | null {
   const target = resolve(cwdValue);
-  return listRecentSessions(100).find((session) => session.cwd === target) ?? null;
+  ensureSessionsDir();
+  let latest: StoredChatSession | null = null;
+  for (const sessionPath of listSessionFilePaths(SESSIONS_DIR)) {
+    const session = loadSessionFromPath(sessionPath);
+    if (session?.cwd === target && (!latest || session.updatedAt > latest.updatedAt)) {
+      latest = session;
+    }
+  }
+  return latest;
 }
 
 export function listRecentSessions(limit = 20): StoredChatSession[] {

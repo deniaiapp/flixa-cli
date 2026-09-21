@@ -1,6 +1,6 @@
 {
   "name": "@deniai/flixa",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "private": false,
   "main": "./dist/index.js",
@@ -26,7 +26,8 @@
     "lint": "oxlint src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "format": "oxfmt src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "format:check": "oxfmt --check src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
-    "check": "bunx tsc --noEmit && bun run lint && bun run format:check && bun run build && bun run openclaw:check",
+    "check": "bunx tsc --noEmit && bun run lint && bun run format:check && bun run regression:check && bun run build && bun run openclaw:check",
+    "regression:check": "bun run scripts/verify-cli-regressions.ts",
     "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
   },
   "devDependencies": {

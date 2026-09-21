@@ -108,11 +108,9 @@ export function registerChatCommand(program: Command): void {
 }
 
 function applyChatOptions(command: Command): void {
-  const resolvedDefaults = resolveProviderContext();
-  const defaultModel = resolvedDefaults.model || getPersistedModel() || DEFAULT_FLIXA_MODEL;
   command
     .option("-p, --provider <provider>", "Provider to use (defaults to configured provider)")
-    .option("-m, --model <model>", "Model to use", defaultModel)
+    .option("-m, --model <model>", "Model to use (defaults to configured provider's model)")
     .option("-s, --system <prompt>", "System prompt")
     .option("--base-url <url>", "Override the API base URL for providers that support it")
     .option("--json", "Print the raw JSON response")

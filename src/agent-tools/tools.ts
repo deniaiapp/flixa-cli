@@ -1,5 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -421,7 +428,7 @@ async function writeFileTool(
     getRequiredString(args, "file_path"),
     context.workspaceRoot,
   );
-  const content = getRequiredString(args, "content");
+  const content = getRequiredString(args, "content", true);
 
   const parent = resolve(filePath, "..");
   if (!existsSync(parent)) {
@@ -456,7 +463,7 @@ async function editFileTool(
     context.workspaceRoot,
   );
   const oldString = getRequiredString(args, "old_string");
-  const newString = getRequiredString(args, "new_string");
+  const newString = getRequiredString(args, "new_string", true);
   const replaceAll = Boolean(args["replace_all"]);
 
   const original = readFileSync(filePath, "utf-8");
@@ -470,7 +477,7 @@ async function editFileTool(
 
   const updated = replaceAll
     ? original.split(oldString).join(newString)
-    : original.replace(oldString, newString);
+    : original.replace(oldString, () => newString);
   writeFileSync(filePath, updated, "utf-8");
 
   const relativePath = toWorkspaceRelative(filePath, context.workspaceRoot);
@@ -654,11 +661,9 @@ function resolveWorkspacePath(pathValue: string, workspaceRoot: string): string 
   const absolutePath = isAbsolute(pathValue)
     ? resolve(pathValue)
     : resolve(workspaceRoot, pathValue);
-  const relativePath = relative(workspaceRoot, absolutePath);
-
   if (
-    relativePath === "" ||
-    (!relativePath.startsWith("..") && !relativePath.includes(`..${sep}`))
+    isPathInside(workspaceRoot, absolutePath) &&
+    isPathInside(realpathSync(workspaceRoot), resolveRealPath(absolutePath))
   ) {
     return absolutePath;
   }
@@ -666,14 +671,33 @@ function resolveWorkspacePath(pathValue: string, workspaceRoot: string): string 
   throw new Error(`Path must stay inside the workspace: ${toPortablePath(pathValue)}`);
 }
 
+function isPathInside(root: string, path: string): boolean {
+  const relativePath = relative(root, path);
+  return !isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`);
+}
+
+// Resolve existing ancestors too, so new files cannot escape through a linked directory.
+function resolveRealPath(path: string): string {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return resolve(resolveRealPath(parent), relative(parent, path));
+  }
+  // A dangling link must fail here instead of being treated as a new file.
+  return realpathSync(path);
+}
+
 function toWorkspaceRelative(pathValue: string, workspaceRoot: string): string {
   const relativePath = relative(workspaceRoot, pathValue);
   return relativePath ? relativePath.replace(/\\/g, "/") : ".";
 }
 
-function getRequiredString(args: Record<string, unknown>, key: string): string {
+function getRequiredString(args: Record<string, unknown>, key: string, allowEmpty = false): string {
   const value = args[key];
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
     throw new Error(`Missing required string: ${key}`);
   }
   return value;
