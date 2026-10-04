@@ -32,4 +32,4 @@ Platform-specific with fallback chain:
 - Windows → DPAPI via PowerShell temp script (secret never passed as CLI arg), falls back to `~/.flixa/credentials`
 
 **`claude-code` command (`src/commands/claude-code.ts`):**
-Writes the stored API key into `~/.claude.json` (`primaryApiKey`) and `~/.claude/settings.json` (`env.ANTHROPIC_API_KEY`, `env.ANTHROPIC_BASE_URL → https://api.flixa.engineer/`) to redirect Claude Code to the Flixa proxy backend. Prompts for confirmation before overwriting existing values.
+Writes the stored API key into `~/.claude.json` (`primaryApiKey`) and `~/.claude/settings.json` (`env.ANTHROPIC_API_KEY`, `env.ANTHROPIC_BASE_URL → https://flixa-api.deniai.app/`) to redirect Claude Code to the Flixa proxy backend. Prompts for confirmation before overwriting existing values.

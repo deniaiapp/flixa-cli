@@ -123,6 +123,32 @@ flixa ship "Fix the failing login flow" --verify "bun run build" --share .flixa/
 flixa ship "Plan a migration to SQLite" --plan
 ```
 
+Pass a GitHub Issue URL to fetch its title, body, labels, and canonical URL
+before starting the Ship run. The Issue text is treated as untrusted task
+context, and the share card shows only the title and URL instead of copying the
+full Issue body:
+
+```sh
+flixa ship https://github.com/org/repo/issues/123
+```
+
+To publish a card, opt in explicitly with `--share-url`. This creates an
+unlisted Flixa Share URL containing the redacted card metadata, changed-file
+list, diff stat, verification result, model, and final summary; it does not
+publish repository source:
+
+```sh
+flixa ship "Fix the failing login flow" --share-url
+flixa share --share-url
+```
+
+The default endpoint is `https://share.flixa.engineer/api/cards`. Set
+`FLIXA_SHARE_ENDPOINT` to point at a local or self-hosted Share service during
+development.
+
+The generated card includes a `Try this task with Flixa` command using the
+canary package so someone viewing the card can reproduce the task quickly.
+
 By default, Ship uses guarded auto mode: file edits and shell commands are
 reviewed for safety, while deterministic destructive commands are blocked.
 Use `--interactive` for an approval prompt on every edit/command or `--yolo`

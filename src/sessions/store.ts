@@ -14,6 +14,8 @@ export interface StoredChatSession {
   yoloMode?: boolean;
   planMode?: boolean;
   acceptEdits?: boolean;
+  taskDisplayPrompt?: string;
+  taskSourceUrl?: string;
   createdAt: string;
   updatedAt: string;
   history: ChatMessage[];

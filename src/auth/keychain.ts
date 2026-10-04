@@ -75,16 +75,15 @@ function getWinDpapiFile(provider: ProviderId): string {
 
 // macOS Keychain
 function macSave(service: string, account: string, secret: string): void {
-  const result = runCommand("security", [
-    "add-generic-password",
-    "-s",
-    service,
-    "-a",
-    account,
-    "-w",
-    secret,
-    "-U",
-  ]);
+  // Passing the secret via `-w <secret>` would expose it in the process list, so feed
+  // the command to `security -i` over stdin instead.
+  if (/[\r\n]/.test(secret)) {
+    throw new Error("Secret must not contain line breaks.");
+  }
+  const quote = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const result = runCommand("security", ["-i"], {
+    input: `add-generic-password -s ${quote(service)} -a ${quote(account)} -w ${quote(secret)} -U\n`,
+  });
   assertCommandSucceeded(`Saving secret to macOS Keychain for ${service}`, result);
 }
 

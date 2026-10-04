@@ -17,6 +17,7 @@ import {
 } from "../agent-tools/runner.ts";
 import { executeToolCall, type ToolExecutionContext } from "../agent-tools/tools.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
+import { resolveGitHubIssuePrompt } from "../github/issues.ts";
 import {
   createSession,
   loadLatestSessionForCwd,
@@ -26,6 +27,7 @@ import {
 import {
   buildShareCard,
   copyToClipboard,
+  publishShareCard,
   writeShareCard,
   type VerificationEvidence,
 } from "../runs/share-card.ts";
@@ -42,6 +44,7 @@ type ShipOptions = {
   continue?: boolean;
   verify?: string;
   share?: string | boolean;
+  shareUrl?: boolean;
   json?: boolean;
 };
 
@@ -70,6 +73,7 @@ export function registerShipCommand(program: Command): void {
     .option("-c, --continue", "Continue the latest session in this directory")
     .option("--verify <command>", "Run one explicit verification command afterward")
     .option("--share [path]", "Print a redacted share card, or write it to a Markdown path")
+    .option("--share-url", "Publish the redacted card to Flixa Share")
     .option("--json", "Print machine-readable output")
     .action(async (promptParts: string[], options: ShipOptions, command: Command) => {
       await runShipCommand(promptParts, {
@@ -84,10 +88,13 @@ async function runShipCommand(promptParts: string[], options: ShipOptions): Prom
     throw new Error("--plan and --yolo cannot be used together.");
   }
 
-  const prompt = promptParts.join(" ").trim() || (await readPromptFromStdin());
-  if (!prompt) {
+  const requestedPrompt = promptParts.join(" ").trim() || (await readPromptFromStdin());
+  if (!requestedPrompt) {
     throw new Error('Usage: flixa ship "your coding task"');
   }
+  const issuePrompt = resolveGitHubIssuePrompt(requestedPrompt);
+  const prompt = issuePrompt?.prompt ?? requestedPrompt;
+  const displayPrompt = issuePrompt?.displayPrompt ?? requestedPrompt;
 
   const providerContext = resolveProviderContext({
     provider: options.provider,
@@ -128,7 +135,7 @@ async function runShipCommand(promptParts: string[], options: ShipOptions): Prom
         `${options.plan ? "plan" : options.yolo ? "yolo" : options.interactive ? "interactive" : "guarded auto"} · ${providerContext.provider}/${providerContext.model}`,
       ),
     );
-    console.log(chalk.cyan(`› ${prompt}`));
+    console.log(chalk.cyan(`› ${displayPrompt}`));
     console.log();
   }
 
@@ -214,15 +221,18 @@ async function runShipCommand(promptParts: string[], options: ShipOptions): Prom
     autoMode: !options.plan && !options.interactive && !options.yolo,
     yoloMode: Boolean(options.yolo),
     acceptEdits: false,
+    taskDisplayPrompt: displayPrompt,
+    taskSourceUrl: issuePrompt?.sourceUrl,
     updatedAt: endedAt,
   };
   saveSession(savedSession);
 
-  const shareRequested = options.share !== undefined;
+  const shareRequested = options.share !== undefined || options.shareUrl === true;
   const shareCard = shareRequested
     ? buildShareCard({
         workspaceRoot,
-        prompt,
+        prompt: displayPrompt,
+        rerunPrompt: issuePrompt?.sourceUrl,
         provider,
         model,
         finalText,
@@ -237,6 +247,7 @@ async function runShipCommand(promptParts: string[], options: ShipOptions): Prom
   if (typeof options.share === "string" && shareCard) {
     sharePath = writeShareCard(shareCard, options.share, workspaceRoot);
   }
+  const shareUrl = options.shareUrl && shareCard ? await publishShareCard(shareCard) : undefined;
   const clipboard = shareCard ? copyToClipboard(shareCard) : undefined;
 
   if (options.json) {
@@ -251,6 +262,8 @@ async function runShipCommand(promptParts: string[], options: ShipOptions): Prom
           text: finalText,
           verification: verification || null,
           share_path: sharePath || null,
+          share_url: shareUrl?.url || null,
+          share_url_error: shareUrl?.reason || null,
           copied_to_clipboard: clipboard?.copied || false,
           clipboard_method: clipboard?.method || null,
           share_card: sharePath ? null : shareCard || null,
@@ -275,6 +288,11 @@ async function runShipCommand(promptParts: string[], options: ShipOptions): Prom
       console.log(chalk.green(`\n✓ Share card saved to ${sharePath}`));
     } else if (shareCard) {
       console.log(`\n${renderShareCard(shareCard)}`);
+    }
+    if (shareUrl?.url) {
+      console.log(chalk.green(`\n✓ Share URL: ${shareUrl.url}`));
+    } else if (shareUrl?.reason) {
+      console.log(chalk.yellow(`\nShare URL unavailable: ${shareUrl.reason}`));
     }
     if (clipboard?.copied) {
       console.log(chalk.green(`\n✓ Share card copied to clipboard (${clipboard.method})`));

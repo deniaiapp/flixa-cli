@@ -33,6 +33,7 @@ import {
   type ProviderDefinition,
   type ProviderId,
 } from "./registry.ts";
+import { assertSecureBaseUrl } from "../security/url.ts";
 import type { ChatMessage } from "../flixa/api.ts";
 import { createFlixaFetch, getFlixaCliClientHeaders } from "../http/flixaClientHeaders.ts";
 import { rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
@@ -170,8 +171,9 @@ export function resolveProviderContext(
     definition.defaultModel ||
     getPersistedModel() ||
     "gpt-4.1";
-  const baseUrl =
+  const rawBaseUrl =
     options.baseUrl?.trim() || getPersistedProviderBaseUrl(provider) || definition.defaultBaseUrl;
+  const baseUrl = rawBaseUrl ? assertSecureBaseUrl(rawBaseUrl) : rawBaseUrl;
 
   const apiKey = resolveApiKeyForProvider(provider);
 

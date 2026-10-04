@@ -12,7 +12,7 @@ const CLAUDE_JSON = join(homedir(), ".claude.json");
 const CLAUDE_SETTINGS_JSON = join(homedir(), ".claude", "settings.json");
 
 export function registerClaudeCodeCommand(program: Command): void {
-  program
+  const claudeCode = program
     .command("claude-code")
     .description("Configure Claude Code to use a supported provider")
     .option("-p, --provider <provider>", "Provider to use for Claude Code")
@@ -134,6 +134,110 @@ export function registerClaudeCodeCommand(program: Command): void {
       console.log();
       console.log(chalk.dim("Start Claude Code with:"));
       console.log(chalk.cyan("  claude"));
+    });
+
+  claudeCode
+    .command("unset")
+    .description("Remove the provider settings written by `flixa claude-code`")
+    .option("-p, --provider <provider>", "Provider whose settings should be removed")
+    .option("--dry-run", "Show planned changes without writing files")
+    .action((_options: unknown, command: Command) => {
+      // The parent `claude-code` command declares the same flags and swallows them.
+      const options = command.optsWithGlobals<{ provider?: string; dryRun?: boolean }>();
+      const provider = resolveProvider(options.provider);
+      const providerDefinition = getProviderDefinition(provider);
+      const claudeCodeEnv = providerDefinition.claudeCodeEnv;
+
+      if (!claudeCodeEnv) {
+        console.error(
+          chalk.red("✗ Unsupported provider for Claude Code:") +
+            ` ${providerDefinition.displayName}. Supported providers: flixa, anthropic.`,
+        );
+        process.exit(1);
+      }
+
+      if (options.dryRun) {
+        console.log(chalk.yellow("Dry run only. No files will be written."));
+      }
+
+      const apiKey = getApiKey(provider);
+      // Only remove keys that look like ours, so a user's own key is never deleted.
+      const isOurs = (value: unknown): boolean =>
+        typeof value === "string" && (apiKey === null || apiKey === undefined || value === apiKey);
+
+      let totalChanged = 0;
+
+      console.log(chalk.bold("\n~/.claude.json"));
+      const claudeJson = readJsonOrExit(CLAUDE_JSON, "~/.claude.json");
+      if (!("primaryApiKey" in claudeJson)) {
+        console.log(chalk.dim("  primaryApiKey: not set, skipping"));
+      } else if (!isOurs(claudeJson["primaryApiKey"])) {
+        console.log(chalk.dim("  primaryApiKey: differs from the stored key, skipping"));
+      } else {
+        delete claudeJson["primaryApiKey"];
+        console.log(chalk.green("  primaryApiKey: removed"));
+        if (!options.dryRun) {
+          backupIfExists(CLAUDE_JSON);
+          writeJson(CLAUDE_JSON, claudeJson);
+        }
+        totalChanged++;
+      }
+
+      console.log(chalk.bold("\n~/.claude/settings.json → env"));
+      const settings = readJsonOrExit(CLAUDE_SETTINGS_JSON, "~/.claude/settings.json");
+      const env =
+        typeof settings["env"] === "object" && settings["env"] !== null
+          ? (settings["env"] as Record<string, unknown>)
+          : {};
+
+      let settingsChanged = false;
+      const removeKey = (key: string, remove: boolean, reason: string): void => {
+        if (!(key in env)) {
+          console.log(chalk.dim(`  ${key}: not set, skipping`));
+        } else if (!remove) {
+          console.log(chalk.dim(`  ${key}: ${reason}, skipping`));
+        } else {
+          delete env[key];
+          console.log(chalk.green(`  ${key}: removed`));
+          settingsChanged = true;
+        }
+      };
+
+      removeKey(
+        claudeCodeEnv.apiKeyEnv,
+        isOurs(env[claudeCodeEnv.apiKeyEnv]),
+        "differs from the stored key",
+      );
+      if (claudeCodeEnv.baseUrlEnv) {
+        const baseUrl = getPersistedProviderBaseUrl(provider) ?? providerDefinition.defaultBaseUrl;
+        removeKey(
+          claudeCodeEnv.baseUrlEnv,
+          baseUrl === undefined || env[claudeCodeEnv.baseUrlEnv] === baseUrl,
+          "differs from the provider base URL",
+        );
+      }
+
+      if (settingsChanged) {
+        if (Object.keys(env).length === 0) delete settings["env"];
+        if (!options.dryRun) {
+          backupIfExists(CLAUDE_SETTINGS_JSON);
+          writeJson(CLAUDE_SETTINGS_JSON, settings);
+        }
+        totalChanged++;
+      }
+
+      console.log();
+      if (totalChanged > 0) {
+        console.log(
+          chalk.green(
+            options.dryRun
+              ? "✓ Claude Code unset previewed."
+              : `✓ Removed ${providerDefinition.displayName} settings from Claude Code.`,
+          ),
+        );
+      } else {
+        console.log(chalk.dim("No changes made."));
+      }
     });
 }
 

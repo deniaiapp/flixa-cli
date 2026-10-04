@@ -33,7 +33,7 @@ const BUILTIN_PROVIDERS: Record<string, ProviderDefinition> = {
     displayName: "Flixa",
     authType: "device",
     runtime: "flixa",
-    defaultBaseUrl: "https://api.flixa.engineer/v1/agent",
+    defaultBaseUrl: "https://flixa-api.deniai.app/v1/agent",
     defaultModel: "openai/gpt-5.6-sol",
     source: "builtin",
     claudeCodeEnv: {

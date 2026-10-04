@@ -11,11 +11,9 @@ export interface CommandSafetyAssessment {
  */
 const BLOCKED_COMMANDS: readonly { pattern: RegExp; reason: string }[] = [
   {
-    pattern: /(^|[;&|]\s*)rm\s+(?:-[^\s]*\s+)*-r[^\s]*\s+(?:-[^\s]*\s+)*-f[^\s]*/i,
-    reason: "recursive forced deletion is blocked",
-  },
-  {
-    pattern: /(^|[;&|]\s*)rm\s+-rf\b/i,
+    // Any ordering/spelling of the recursive + force flags: -rf, -fr, -r -f, -Rf, --recursive --force.
+    pattern:
+      /(^|[;&|]\s*)(?:sudo\s+)?rm(?=\s)(?=[^;&|]*\s(?:-[a-z]*r[a-z]*|--recursive)(?:\s|$))(?=[^;&|]*\s(?:-[a-z]*f[a-z]*|--force)(?:\s|$))/i,
     reason: "recursive forced deletion is blocked",
   },
   {
@@ -31,7 +29,9 @@ const BLOCKED_COMMANDS: readonly { pattern: RegExp; reason: string }[] = [
     reason: "destructive git reset/clean/restore is blocked",
   },
   {
-    pattern: /\b(format|diskpart|shutdown|restart-computer)\b/i,
+    // Anchored to command position so `git log --format=...` is not caught.
+    pattern:
+      /(^|[;&|]\s*)(?:format(?:\.com)?\s+[a-z]:|(?:diskpart|shutdown|restart-computer|format-volume)\b)/i,
     reason: "system-destructive commands are blocked",
   },
   {

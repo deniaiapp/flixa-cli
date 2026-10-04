@@ -2,13 +2,19 @@ import chalk from "chalk";
 import { cwd } from "node:process";
 import type { Command } from "commander";
 import { getDefaultProvider } from "../config/store.ts";
-import { buildShareCard, copyToClipboard, writeShareCard } from "../runs/share-card.ts";
+import {
+  buildShareCard,
+  copyToClipboard,
+  publishShareCard,
+  writeShareCard,
+} from "../runs/share-card.ts";
 import { renderShareCard } from "../ui/share-card.ts";
 import { loadLatestSessionForCwd, loadSessionById } from "../sessions/store.ts";
 
 type ShareOptions = {
   session?: string;
   output?: string;
+  shareUrl?: boolean;
   json?: boolean;
 };
 
@@ -19,8 +25,9 @@ export function registerShareCommand(program: Command): void {
     .description("Create a redacted, shareable card from a coding session")
     .option("--session <sessionId>", "Use a specific saved session")
     .option("-o, --output <path>", "Write the card to a Markdown file")
+    .option("--share-url", "Publish the redacted card to Flixa Share")
     .option("--json", "Print card metadata as JSON")
-    .action((options: ShareOptions, command: Command) => {
+    .action(async (options: ShareOptions, command: Command) => {
       const resolvedOptions = {
         ...(command.parent?.opts?.() as Partial<ShareOptions> | undefined),
         ...options,
@@ -44,7 +51,8 @@ export function registerShareCommand(program: Command): void {
         .find((message) => message.role === "assistant")?.content;
       const card = buildShareCard({
         workspaceRoot: session.cwd || cwd(),
-        prompt: lastUserPrompt || "Flixa coding session",
+        prompt: session.taskDisplayPrompt || lastUserPrompt || "Flixa coding session",
+        rerunPrompt: session.taskSourceUrl,
         provider: session.provider || getDefaultProvider(),
         model: session.model,
         finalText: lastAssistantText || "No assistant result yet.",
@@ -59,6 +67,7 @@ export function registerShareCommand(program: Command): void {
         outputPath = writeShareCard(card, resolvedOptions.output, session.cwd || cwd());
       }
       const clipboard = copyToClipboard(card);
+      const shareUrl = resolvedOptions.shareUrl ? await publishShareCard(card) : undefined;
 
       if (resolvedOptions.json) {
         console.log(
@@ -68,6 +77,8 @@ export function registerShareCommand(program: Command): void {
               provider: session.provider || getDefaultProvider(),
               model: session.model,
               output_path: outputPath || null,
+              share_url: shareUrl?.url || null,
+              share_url_error: shareUrl?.reason || null,
               copied_to_clipboard: clipboard.copied,
               clipboard_method: clipboard.method || null,
               card,
@@ -88,6 +99,11 @@ export function registerShareCommand(program: Command): void {
         console.log(chalk.green(`✓ Share card copied to clipboard (${clipboard.method})`));
       } else {
         console.log(chalk.dim(`Clipboard unavailable: ${clipboard.reason}`));
+      }
+      if (shareUrl?.url) {
+        console.log(chalk.green(`✓ Share URL: ${shareUrl.url}`));
+      } else if (shareUrl?.reason) {
+        console.log(chalk.yellow(`Share URL unavailable: ${shareUrl.reason}`));
       }
     });
 }

@@ -4,6 +4,7 @@ import { DEFAULT_PROVIDER, getProviderDefinition, type ProviderId } from "../pro
 
 const DENI_AI_BASE_URL = "https://deniai.app";
 const POLLING_INTERVAL_MS = 5_000;
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 const DEVICE_AUTH_TIMEOUT_MS = 15 * 60 * 1_000;
 
 export function getApiKey(provider: ProviderId = DEFAULT_PROVIDER): string | null {
@@ -33,6 +34,7 @@ async function initiateDeviceAuth(): Promise<DeviceAuthInitiateResponse> {
   const res = await fetch(`${DENI_AI_BASE_URL}/api/device-auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({ action: "initiate" }),
   });
   if (!res.ok) {
@@ -45,6 +47,7 @@ async function pollDeviceAuth(deviceCode: string): Promise<DeviceAuthPollRespons
   const res = await fetch(`${DENI_AI_BASE_URL}/api/device-auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({ action: "poll", deviceCode }),
   });
   if (!res.ok) {
@@ -69,17 +72,30 @@ export async function loginWithDeviceAuth(options: LoginOptions = {}): Promise<s
   const initResponse = await initiateDeviceAuth();
   const { userCode, deviceCode, expiresIn } = initResponse;
 
-  const verificationUrl = `${DENI_AI_BASE_URL}/flixa/authorize?code=${userCode}`;
+  const verificationUrl = `${DENI_AI_BASE_URL}/flixa/authorize?code=${encodeURIComponent(userCode)}`;
 
   options.onUserCode?.(userCode, verificationUrl);
 
-  const timeoutMs = Math.min(expiresIn * 1_000, DEVICE_AUTH_TIMEOUT_MS);
+  const timeoutMs =
+    Number.isFinite(expiresIn) && expiresIn > 0
+      ? Math.min(expiresIn * 1_000, DEVICE_AUTH_TIMEOUT_MS)
+      : DEVICE_AUTH_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
 
+  let consecutiveFailures = 0;
   while (Date.now() < deadline) {
     await sleep(POLLING_INTERVAL_MS);
 
-    const pollResponse = await pollDeviceAuth(deviceCode);
+    let pollResponse: DeviceAuthPollResponse;
+    try {
+      pollResponse = await pollDeviceAuth(deviceCode);
+    } catch (error) {
+      // A transient network/server error should not abort a login the user is mid-way through.
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error;
+      continue;
+    }
+    consecutiveFailures = 0;
     if (pollResponse.approved && pollResponse.apiKey) {
       const result = saveSecret(pollResponse.apiKey, provider);
       options.onSaved?.(result.backend, result.warning);

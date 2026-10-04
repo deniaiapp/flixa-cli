@@ -428,6 +428,7 @@ async function writeFileTool(
     getRequiredString(args, "file_path"),
     context.workspaceRoot,
   );
+  assertNotGitInternals(filePath, context.workspaceRoot);
   const content = getRequiredString(args, "content", true);
 
   const parent = resolve(filePath, "..");
@@ -462,6 +463,7 @@ async function editFileTool(
     getRequiredString(args, "file_path"),
     context.workspaceRoot,
   );
+  assertNotGitInternals(filePath, context.workspaceRoot);
   const oldString = getRequiredString(args, "old_string");
   const newString = getRequiredString(args, "new_string", true);
   const replaceAll = Boolean(args["replace_all"]);
@@ -504,11 +506,13 @@ async function grepTool(
     : context.workspaceRoot;
   const glob = getOptionalString(args, "glob");
 
-  const commandArgs = ["-n", "--no-heading", "--color", "never", pattern];
+  // `-e` and `--` keep model-supplied values from being parsed as ripgrep flags
+  // (e.g. `--pre=<cmd>` would execute an arbitrary program).
+  const commandArgs = ["-n", "--no-heading", "--color", "never"];
   if (glob) {
     commandArgs.push("-g", glob);
   }
-  commandArgs.push(searchRoot);
+  commandArgs.push("-e", pattern, "--", searchRoot);
 
   const result = await runProcess(getRipgrepExecutable(), commandArgs, {
     cwd: context.workspaceRoot,
@@ -542,10 +546,14 @@ async function globTool(
 
   let files: string[];
   if (pattern) {
-    const result = await runProcess(getRipgrepExecutable(), ["--files", "-g", pattern, root], {
-      cwd: context.workspaceRoot,
-      timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
-    });
+    const result = await runProcess(
+      getRipgrepExecutable(),
+      ["--files", "-g", pattern, "--", root],
+      {
+        cwd: context.workspaceRoot,
+        timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
+      },
+    );
     files = result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -669,6 +677,15 @@ function resolveWorkspacePath(pathValue: string, workspaceRoot: string): string 
   }
 
   throw new Error(`Path must stay inside the workspace: ${toPortablePath(pathValue)}`);
+}
+
+// Hooks and config under .git run code on later git commands, so editing them
+// would bypass the approval required for Bash.
+function assertNotGitInternals(filePath: string, workspaceRoot: string): void {
+  const segments = relative(workspaceRoot, filePath).split(/[\\/]/);
+  if (segments.some((segment) => segment.toLowerCase() === ".git")) {
+    throw new Error("Writing inside .git is not allowed.");
+  }
 }
 
 function isPathInside(root: string, path: string): boolean {
@@ -856,11 +873,14 @@ async function runProcess(
       child.kill();
     }, options.timeoutMs);
 
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+    // Keep only what truncate() can ever return; a chatty command must not exhaust memory.
+    const append = (current: string, chunk: Buffer): string =>
+      current.length > MAX_TOOL_OUTPUT_CHARS ? current : current + chunk.toString();
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout = append(stdout, chunk);
     });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = append(stderr, chunk);
     });
     child.on("error", (error) => {
       clearTimeout(timeout);

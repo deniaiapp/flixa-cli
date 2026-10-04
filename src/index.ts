@@ -9,7 +9,13 @@ import { registerChatCommand } from "./commands/chat.ts";
 import { registerModelCommand } from "./commands/model.ts";
 import { registerUsageCommand } from "./commands/usage.ts";
 import { registerProvidersCommand } from "./commands/providers.ts";
+import { warnIfElevated } from "./security/privileges.ts";
 import { CLI_VERSION } from "./version.ts";
+
+const quietFlags = ["-h", "--help", "-V", "--version"];
+if (!process.argv.slice(2).some((arg) => quietFlags.includes(arg))) {
+  warnIfElevated();
+}
 
 const program = new Command();
 

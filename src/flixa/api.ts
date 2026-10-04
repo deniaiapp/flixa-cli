@@ -2,6 +2,7 @@ import { generateText, jsonSchema, streamText, tool, type ModelMessage } from "a
 import { createOpenResponses } from "@ai-sdk/open-responses";
 import { getApiKey } from "../auth/service.ts";
 import { getDefaultProvider } from "../config/store.ts";
+import { assertSecureBaseUrl } from "../security/url.ts";
 import { formatFlixaHttpError, rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
 import {
   createFlixaFetch,
@@ -10,7 +11,7 @@ import {
 } from "../http/flixaClientHeaders.ts";
 
 export const DEFAULT_FLIXA_BASE_URL =
-  process.env.FLIXA_BASE_URL?.trim() || "https://api.flixa.engineer/v1/agent";
+  process.env.FLIXA_BASE_URL?.trim() || "https://flixa-api.deniai.app/v1/agent";
 export const DEFAULT_FLIXA_MODEL =
   process.env.FLIXA_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "openai/gpt-5.6-sol";
 
@@ -463,7 +464,7 @@ function coerceFlixaResponse(
 }
 
 function resolveBaseUrl(baseUrl?: string): string {
-  return (baseUrl?.trim() || DEFAULT_FLIXA_BASE_URL).replace(/\/+$/, "");
+  return assertSecureBaseUrl(baseUrl?.trim() || DEFAULT_FLIXA_BASE_URL).replace(/\/+$/, "");
 }
 
 export function resolveApiRoot(baseUrl?: string): string {
