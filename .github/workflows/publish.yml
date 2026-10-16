@@ -21,11 +21,13 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: pnpm/action-setup@v4
+
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: bun run build
+        run: pnpm run build
 
       - uses: actions/setup-node@v6
         with:
@@ -41,13 +43,13 @@ jobs:
 
       - name: Install OpenClaw plugin dependencies
         working-directory: integrations/openclaw-flixa
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build OpenClaw plugin
         working-directory: integrations/openclaw-flixa
         env:
           FLIXA_RELEASE_VERSION: ${{ github.ref_type == 'branch' && format('{0}-canary.{1}', steps.package.outputs.version, github.run_number) || steps.package.outputs.version }}
-        run: npm run build
+        run: pnpm run build
 
       - name: Publish canary
         if: github.ref_type == 'branch'

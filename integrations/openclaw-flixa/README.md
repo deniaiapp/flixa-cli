@@ -20,12 +20,12 @@ flixa login
 ## Local development
 
 ```sh
-npm install
-npm run build
+pnpm install
+pnpm run build
 node -e "import('./dist/index.js').then(() => console.log('Flixa OpenClaw plugin loaded.'))"
 ```
 
-`npm run build` synchronizes the plugin version from the repository root. Set
+`pnpm run build` synchronizes the plugin version from the repository root. Set
 `FLIXA_RELEASE_VERSION` in a release job when publishing a canary or stable
 plugin artifact.
 
@@ -61,7 +61,7 @@ Flixa `--yolo` for untrusted channels.
 ## Publish
 
 ```sh
-npm pack
+pnpm pack
 openclaw plugins install npm-pack:<generated-tarball>
 ```
 

@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-bun install               # Install dependencies
-bun run dev               # Run CLI directly via bun (no build needed)
-bun run build             # Bundle to dist/ (required before npm publish)
+pnpm install              # Install dependencies
+pnpm run dev              # Run CLI directly via bun (no build needed)
+pnpm run build            # Bundle to dist/ (required before npm publish)
 ```
 
 No test runner is configured.

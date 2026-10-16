@@ -26,7 +26,7 @@
     "lint": "oxlint src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "format": "oxfmt src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "format:check": "oxfmt --check src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
-    "check": "bunx tsc --noEmit && bun run lint && bun run format:check && bun run regression:check && bun run build && bun run openclaw:check",
+    "check": "pnpm exec tsc --noEmit && pnpm run lint && pnpm run format:check && pnpm run regression:check && pnpm run build && pnpm run openclaw:check",
     "regression:check": "bun run scripts/verify-cli-regressions.ts",
     "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
   },
@@ -46,6 +46,7 @@
     "@ai-sdk/google": "^3.0.55",
     "@ai-sdk/open-responses": "^1.0.8",
     "@ai-sdk/openai": "^3.0.49",
+    "@ai-sdk/provider": "^3.0.8",
     "@inquirer/prompts": "^8.3.2",
     "@vscode/ripgrep": "^1.15.14",
     "ai": "^6.0.142",
@@ -58,5 +59,6 @@
     "open": "^11.0.0",
     "react": "^18.3.1",
     "react-devtools-core": "^6.1.5"
-  }
+  },
+  "packageManager": "pnpm@12.10.1"
 }

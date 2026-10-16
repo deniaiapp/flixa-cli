@@ -4,12 +4,12 @@ This file provides guidance to coding agents when working with this repository.
 
 ## Commands
 
-- `bun install` — install dependencies
-- `bun run dev` — run the CLI directly from `src/index.ts`
-- `bun run build` — bundle to `dist/` and prepare the published package
-- `bun run lint` — run oxlint over CLI, scripts, and OpenClaw integration sources
-- `bun run format:check` — verify oxfmt formatting
-- `bun run check` — typecheck, lint, format check, build, and integration smoke
+- `pnpm install` — install dependencies
+- `pnpm run dev` — run the CLI directly from `src/index.ts`
+- `pnpm run build` — bundle to `dist/` and prepare the published package
+- `pnpm run lint` — run oxlint over CLI, scripts, and OpenClaw integration sources
+- `pnpm run format:check` — verify oxfmt formatting
+- `pnpm run check` — typecheck, lint, format check, build, and integration smoke
 - No test runner is configured; do not claim tests passed unless you ran some other concrete verification
 - Useful targeted checks:
   - `bun run src/index.ts --help`
