@@ -202,8 +202,17 @@ try {
 }
 `;
 
-  const result = runPs1(script);
-  assertCommandSucceeded(`Saving secret with Windows DPAPI for ${provider}`, result);
+  try {
+    const result = runPs1(script);
+    assertCommandSucceeded(`Saving secret with Windows DPAPI for ${provider}`, result);
+  } finally {
+    // The script removes the file itself, but not when PowerShell never started.
+    try {
+      unlinkSync(secretFile);
+    } catch {
+      // Already removed.
+    }
+  }
   enforcePrivateFile(getWinDpapiFile(provider));
 }
 
@@ -279,14 +288,20 @@ export function saveSecret(secret: string, provider: ProviderId = DEFAULT_PROVID
   }
 
   if (process.platform === "linux") {
+    let reason = "secret-tool not found";
     if (isSecretToolAvailable()) {
-      linuxSave(service, account, secret);
-      return { backend: "secret-tool" };
+      try {
+        linuxSave(service, account, secret);
+        return { backend: "secret-tool" };
+      } catch (error) {
+        // Headless sessions often have the binary but no reachable keyring.
+        reason = error instanceof Error ? error.message : String(error);
+      }
     }
     fileSave(secret, provider);
     return {
       backend: "file",
-      warning: `secret-tool not found. Stored in plaintext at ${getFallbackFile(provider)} with best-effort restricted permissions.`,
+      warning: `${reason}. Stored in plaintext at ${getFallbackFile(provider)} with best-effort restricted permissions.`,
     };
   }
 
@@ -308,10 +323,10 @@ export function loadSecret(provider: ProviderId = DEFAULT_PROVIDER): string | nu
 
   if (process.platform === "darwin") return macLoad(service, account);
   if (process.platform === "linux") {
-    if (isSecretToolAvailable()) return linuxLoad(service, account);
-    return fileLoad(provider);
+    // A secret saved by the plaintext fallback must stay readable if the keyring is unusable.
+    return (isSecretToolAvailable() ? linuxLoad(service, account) : null) ?? fileLoad(provider);
   }
-  if (process.platform === "win32") return winLoad(provider);
+  if (process.platform === "win32") return winLoad(provider) ?? fileLoad(provider);
   return fileLoad(provider);
 }
 
@@ -324,15 +339,16 @@ export function deleteSecret(provider: ProviderId = DEFAULT_PROVIDER): void {
     return;
   }
   if (process.platform === "linux") {
+    // Remove the plaintext fallback first so an unreachable keyring cannot leave it behind.
+    fileDelete(provider);
     if (isSecretToolAvailable()) {
       linuxDelete(service, account);
-      return;
     }
-    fileDelete(provider);
     return;
   }
   if (process.platform === "win32") {
     winDelete(provider);
+    fileDelete(provider);
     return;
   }
   fileDelete(provider);

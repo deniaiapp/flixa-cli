@@ -29,10 +29,13 @@ export async function updateField(
   }
 
   if (current !== undefined) {
+    const looksSecret = /key|token|secret/i.test(key);
     const masked =
       typeof current === "string" && current.startsWith("deni_")
         ? current.slice(0, 10) + "****"
-        : String(current);
+        : typeof current === "string" && looksSecret
+          ? current.slice(0, 4) + "****"
+          : String(current);
     const ok = await confirm({
       message: `  ${label}: current value is ${chalk.yellow(masked)}, replace?`,
       default: true,

@@ -605,7 +605,7 @@ async function executeToolCallSafely(
   signal?: AbortSignal,
 ): Promise<Awaited<ReturnType<typeof executeToolCall>>> {
   try {
-    return await executeToolCall(request, context);
+    return await executeToolCall(request, signal ? { ...context, signal } : context);
   } catch (error) {
     if (signal?.aborted || isAbortError(error)) {
       throw error;

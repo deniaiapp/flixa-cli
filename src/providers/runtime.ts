@@ -1,5 +1,6 @@
 import {
   generateText,
+  jsonSchema,
   stepCountIs,
   tool as aiTool,
   type LanguageModel,
@@ -283,7 +284,10 @@ export function createLanguageModel(context: ResolvedProviderContext): LanguageM
       return anthropic(context.model);
     }
     case "google": {
-      const google = createGoogleGenerativeAI({ apiKey });
+      const google = createGoogleGenerativeAI({
+        apiKey,
+        ...(context.baseUrl ? { baseURL: context.baseUrl } : {}),
+      });
       return google(context.model);
     }
   }
@@ -303,6 +307,7 @@ export async function generateProviderText(options: {
   prompt: string;
   system?: string;
   maxOutputTokens?: number;
+  signal?: AbortSignal;
 }): Promise<{ text: string; context: ResolvedProviderContext }> {
   const context = resolveProviderContext(options);
   try {
@@ -310,6 +315,7 @@ export async function generateProviderText(options: {
     const result = await generateText({
       model,
       prompt: options.prompt,
+      ...(options.signal ? { abortSignal: options.signal } : {}),
       ...(options.system ? { system: options.system } : {}),
       ...(typeof options.maxOutputTokens === "number"
         ? { maxOutputTokens: options.maxOutputTokens }
@@ -357,7 +363,7 @@ export async function runSharedAgentTurn(
       definition.name,
       aiTool({
         description: definition.description,
-        inputSchema: definition.parameters as never,
+        inputSchema: jsonSchema(definition.parameters as never),
         execute: async (input) => {
           const callId = `${definition.name}-${Date.now()}-${Math.random()
             .toString(36)
@@ -454,7 +460,7 @@ export async function runSharedAgentTurn(
                 callId,
                 argumentsText,
               },
-              toolContext,
+              options.signal ? { ...toolContext, signal: options.signal } : toolContext,
             );
             options.onEvent?.({
               type: "tool_result",
@@ -661,7 +667,7 @@ async function fetchOpenAiCompatibleModelOptions(
 
   const models = Array.isArray(payload.data)
     ? payload.data
-        .map((model) => normalizeOpenAiCompatibleModel(model))
+        .map((model) => normalizeOpenAiCompatibleModel(model, context.provider === "openai"))
         .filter((model): model is ProviderModelOption => model !== null)
     : [];
 
@@ -755,9 +761,13 @@ async function fetchOpenRouterModelOptions(
   return finalizeProviderModelOptions(models, context);
 }
 
-function normalizeOpenAiCompatibleModel(model: OpenAiCompatibleModel): ProviderModelOption | null {
+function normalizeOpenAiCompatibleModel(
+  model: OpenAiCompatibleModel,
+  // The name-based text-model filter only knows OpenAI's own naming (gpt-*, o1, ...).
+  filterOpenAiNames: boolean,
+): ProviderModelOption | null {
   const id = typeof model.id === "string" ? model.id.trim() : "";
-  if (!id || !isLikelyTextModelForOpenAiCompatibleProvider(id)) {
+  if (!id || (filterOpenAiNames && !isLikelyTextModelForOpenAiCompatibleProvider(id))) {
     return null;
   }
 

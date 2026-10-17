@@ -189,14 +189,16 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 }
 
 function decodeBody(body: Buffer, encoding: string): Buffer {
+  // Compressed bodies are capped on the wire only, so cap the expanded size too (zip bombs).
+  const limit = { maxOutputLength: MAX_BODY_BYTES * 4 };
   switch (encoding) {
     case "gzip":
     case "x-gzip":
-      return gunzipSync(body);
+      return gunzipSync(body, limit);
     case "deflate":
-      return inflateSync(body);
+      return inflateSync(body, limit);
     case "br":
-      return brotliDecompressSync(body);
+      return brotliDecompressSync(body, limit);
     default:
       return body;
   }
@@ -298,6 +300,11 @@ function isPrivateIpv6(address: string): boolean {
   if (groups.slice(0, 5).every((group) => group === 0)) {
     // ::ffff:a.b.c.d is IPv4-mapped; ::, ::1 and IPv4-compatible forms are always blocked.
     return groups[5] === 0xffff ? isPrivateIpv4(embeddedV4(groups[6]!, groups[7]!)) : true;
+  }
+
+  // ::ffff:0:a.b.c.d (IPv4-translated, RFC 2765) also embeds an IPv4 address.
+  if (groups.slice(0, 4).every((group) => group === 0) && groups[4] === 0xffff && groups[5] === 0) {
+    return isPrivateIpv4(embeddedV4(groups[6]!, groups[7]!));
   }
 
   // 64:ff9b::/96 (NAT64) embeds an IPv4 address in the last 32 bits.

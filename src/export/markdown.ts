@@ -47,7 +47,8 @@ export function resolveExportPath(
 
   const resolved = resolve(root, requested);
   const rel = relative(root, resolved);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
+  // An empty `rel` is the workspace root itself, which would write `<root>.md` outside it.
+  if (rel === "" || /^\.\.(?:[\\/]|$)/.test(rel) || isAbsolute(rel)) {
     throw new Error("Export path must stay inside the workspace.");
   }
 

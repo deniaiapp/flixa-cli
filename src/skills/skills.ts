@@ -168,9 +168,11 @@ function readSkillFolder(
 
 function listSkillFiles(root: string): string[] {
   const files: string[] = [];
+  // Counts every entry seen, so directory-only trees cannot make the walk unbounded.
+  let visited = 0;
 
   const walk = (directory: string, prefix: string, depth: number): void => {
-    if (files.length >= MAX_SKILL_WALK_ENTRIES) {
+    if (visited >= MAX_SKILL_WALK_ENTRIES) {
       return;
     }
 
@@ -182,9 +184,10 @@ function listSkillFiles(root: string): string[] {
     }
 
     for (const entry of entries) {
-      if (files.length >= MAX_SKILL_WALK_ENTRIES) {
+      if (visited >= MAX_SKILL_WALK_ENTRIES) {
         return;
       }
+      visited += 1;
 
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {

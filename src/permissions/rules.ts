@@ -323,7 +323,9 @@ function globToRegExp(pattern: string): RegExp {
     }
   }
 
-  const regex = new RegExp(`^${source}$`);
+  // Windows and macOS file systems are case-insensitive by default, so a deny rule must be too.
+  const caseInsensitive = process.platform === "win32" || process.platform === "darwin";
+  const regex = new RegExp(`^${source}$`, caseInsensitive ? "i" : "");
   globCache.set(pattern, regex);
   return regex;
 }

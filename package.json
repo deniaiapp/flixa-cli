@@ -1,6 +1,6 @@
 {
   "name": "@deniai/flixa",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "type": "module",
   "private": false,
   "main": "./dist/index.js",
@@ -19,23 +19,24 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "bun run src/index.ts",
-    "start": "bun run src/index.ts",
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts",
     "providers:update": "node scripts/update-models-dev.mjs",
     "openclaw:check": "node scripts/verify-openclaw-integration.mjs",
     "lint": "oxlint src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "format": "oxfmt src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "format:check": "oxfmt --check src scripts integrations/openclaw-flixa/src integrations/openclaw-flixa/scripts",
     "check": "pnpm exec tsc --noEmit && pnpm run lint && pnpm run format:check && pnpm run regression:check && pnpm run build && pnpm run openclaw:check",
-    "regression:check": "bun run scripts/verify-cli-regressions.ts",
-    "build": "bun build src/index.ts --outdir dist --target node --format esm && node scripts/prepare-dist.mjs"
+    "regression:check": "tsx scripts/verify-cli-regressions.ts",
+    "build": "node scripts/build.mjs && node scripts/prepare-dist.mjs"
   },
   "devDependencies": {
-    "@types/bun": "latest",
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.12",
+    "esbuild": "^0.28.2",
     "oxfmt": "^0.64.0",
     "oxlint": "^1.79.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {

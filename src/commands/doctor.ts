@@ -1,10 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { DEFAULT_FLIXA_BASE_URL } from "../flixa/api.ts";
+import { loadInstructionFiles } from "../instructions/files.ts";
 import { resolveProviderContext } from "../providers/runtime.ts";
 import { FLIXA_SESSIONS_DIR } from "../security/paths.ts";
 import { CLI_VERSION } from "../version.ts";
@@ -26,7 +27,6 @@ const require = createRequire(import.meta.url);
 
 const PROCESS_TIMEOUT_MS = 5_000;
 const NETWORK_TIMEOUT_MS = 5_000;
-const INSTRUCTION_CANDIDATES = ["CLAUDE.md", "AGENTS.md", join(".claude", "CLAUDE.md")] as const;
 
 type CheckRunner = () => DoctorCheck | Promise<DoctorCheck>;
 
@@ -101,11 +101,6 @@ function checkFlixaCli(): DoctorCheck {
 }
 
 function checkRuntime(): DoctorCheck {
-  const bunVersion = getBunVersion();
-  if (bunVersion) {
-    return { name: "Runtime", status: "ok", detail: `Bun ${bunVersion}` };
-  }
-
   const nodeVersion = process.version;
   const major = Number.parseInt(nodeVersion.replace(/^v/, "").split(".")[0] ?? "", 10);
   if (Number.isFinite(major) && major < 20) {
@@ -265,7 +260,13 @@ function checkSessionsDirectory(): DoctorCheck {
 }
 
 function checkInstructionFiles(cwd: string): DoctorCheck {
-  const found = INSTRUCTION_CANDIDATES.filter((candidate) => existsSync(resolve(cwd, candidate)));
+  // Sessions also read instruction files from parent directories, so the check must as well.
+  const found = loadInstructionFiles(cwd).map((file) => {
+    const relativePath = relative(cwd, file.path);
+    return relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)
+      ? relativePath
+      : file.path;
+  });
   return {
     name: "Instruction files",
     status: "ok",
@@ -334,11 +335,6 @@ function runCommand(executable: string, args: string[]): string {
     timeout: PROCESS_TIMEOUT_MS,
     stdio: ["ignore", "pipe", "ignore"],
   }).trim();
-}
-
-function getBunVersion(): string | null {
-  const bun = (globalThis as { Bun?: { version?: string } }).Bun;
-  return typeof bun?.version === "string" && bun.version.trim() ? bun.version.trim() : null;
 }
 
 function firstLine(value: string): string {

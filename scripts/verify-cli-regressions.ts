@@ -10,17 +10,21 @@ import { executeToolCall } from "../src/agent-tools/tools.ts";
 // Keep credentials and session fixtures separate from the user's real profile.
 if (!process.env.FLIXA_REGRESSION_HOME) {
   const home = mkdtempSync(join(tmpdir(), "flixa-regressions-"));
-  const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      FLIXA_REGRESSION_HOME: home,
-      FLIXA_API_KEY: "regression-dummy",
-      ANTHROPIC_API_KEY: "regression-dummy",
+  const result = spawnSync(
+    process.execPath,
+    [...process.execArgv, fileURLToPath(import.meta.url)],
+    {
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        FLIXA_REGRESSION_HOME: home,
+        FLIXA_API_KEY: "regression-dummy",
+        ANTHROPIC_API_KEY: "regression-dummy",
+      },
+      stdio: "inherit",
     },
-    stdio: "inherit",
-  });
+  );
   if (result.error) throw result.error;
   process.exit(result.status ?? 1);
 }
@@ -107,7 +111,7 @@ for (const args of [
       );
       checked = true;
     });
-  await program.parseAsync(["bun", "flixa", ...args]);
+  await program.parseAsync(["node", "flixa", ...args]);
   assert.ok(checked);
 }
 

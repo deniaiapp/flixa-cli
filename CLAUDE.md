@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 pnpm install              # Install dependencies
-pnpm run dev              # Run CLI directly via bun (no build needed)
-pnpm run build            # Bundle to dist/ (required before npm publish)
+pnpm run dev              # Run CLI directly from TypeScript via tsx (no build needed)
+pnpm run build            # Bundle to dist/ with esbuild (required before npm publish)
 ```
 
 No test runner is configured.

@@ -153,11 +153,39 @@ function getSessionPathParts(timestamp: string): {
   return { year, month, dayTime: `${day}-${time}` };
 }
 
+const SESSION_ID_PREFIX_LENGTH = 8;
+
 function findSessionPathById(sessionId: string): string | null {
-  for (const sessionPath of listSessionFilePaths(SESSIONS_DIR)) {
-    const fileName = sessionPath.split(/[/\\]/).pop() ?? "";
-    if (fileName === `${sessionId}.json` || fileName.endsWith(`-${sessionId}.json`)) {
+  const wanted = sessionId.trim();
+  if (!wanted) {
+    return null;
+  }
+
+  // The directory may not exist yet on a fresh machine.
+  ensureSessionsDir();
+  const sessionPaths = listSessionFilePaths(SESSIONS_DIR);
+  const fileNameOf = (sessionPath: string): string => sessionPath.split(/[/\\]/).pop() ?? "";
+
+  for (const sessionPath of sessionPaths) {
+    const fileName = fileNameOf(sessionPath);
+    if (fileName === `${wanted}.json` || fileName.endsWith(`-${wanted}.json`)) {
       return sessionPath;
+    }
+  }
+
+  // The session picker only shows the first 8 characters, so accept a unique prefix of that size.
+  if (wanted.length >= SESSION_ID_PREFIX_LENGTH) {
+    const lowered = wanted.toLowerCase();
+    const matches = sessionPaths.filter((sessionPath) => {
+      const idPart = fileNameOf(sessionPath)
+        .replace(/\.json$/, "")
+        .split("-")
+        .slice(-5)
+        .join("-");
+      return idPart.toLowerCase().startsWith(lowered);
+    });
+    if (matches.length === 1) {
+      return matches[0] ?? null;
     }
   }
   return null;

@@ -49,7 +49,11 @@ const BLOCKED_COMMANDS: readonly { pattern: RegExp; reason: string }[] = [
 ];
 
 export function assessCommandSafety(command: string): CommandSafetyAssessment {
-  const normalized = command.replace(/\s+/g, " ").trim();
+  // A newline separates commands just like `;`, so the command-position patterns must see it.
+  const normalized = command
+    .replace(/\r\n|\r|\n/g, " ; ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) {
     return {
       allowed: false,

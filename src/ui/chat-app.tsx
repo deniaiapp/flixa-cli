@@ -124,7 +124,8 @@ const COLORS = {
   error: "red",
 } as const;
 
-const LOGO_LINES = [" /\\_/\\\\", "(=^.^=)", '(")_(")'];
+const DEFAULT_TERMINAL_ROWS = 24;
+const LOGO_LINES = ["█▄▄   ▄▄█", "█▀█████▀█", "▀███▄███▀"];
 const INIT_PROMPT = `Set up a minimal AGENTS.md for this repo. AGENTS.md is loaded into coding-agent sessions, so it must be concise — only include what an agent would get wrong without it.
 
 Please analyze the codebase and either create or improve AGENTS.md.
@@ -227,6 +228,7 @@ function InteractiveChatApp({
     Array<FlixaModelDefinition | ProviderModelOption>
   >([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
+  const [terminalRows, setTerminalRows] = useState(process.stdout.rows ?? DEFAULT_TERMINAL_ROWS);
   const [thinkingStatus, setThinkingStatus] = useState<"thinking" | number | null>(null);
   const [pendingApproval, setPendingApproval] = useState<ToolApprovalRequest | null>(null);
   const [approvalChoice, setApprovalChoice] = useState<ApprovalChoice>("approve");
@@ -680,8 +682,11 @@ function InteractiveChatApp({
         }
       } catch (error) {
         if (abortController.signal.aborted) {
-          appendSystemMessage("Request canceled.");
-          setStatus("Request canceled");
+          // /clear and /new detach this controller before aborting; stay out of the new conversation.
+          if (abortRef.current === abortController) {
+            appendSystemMessage("Request canceled.");
+            setStatus("Request canceled");
+          }
         } else {
           const message = error instanceof Error ? error.message : String(error);
           appendSystemMessage(`Request failed: ${message}`);
@@ -760,8 +765,10 @@ function InteractiveChatApp({
         setStatus("Conversation compacted");
       } catch (error) {
         if (abortController.signal.aborted) {
-          appendSystemMessage("Compaction canceled.");
-          setStatus("Compaction canceled");
+          if (abortRef.current === abortController) {
+            appendSystemMessage("Compaction canceled.");
+            setStatus("Compaction canceled");
+          }
         } else {
           const message = error instanceof Error ? error.message : String(error);
           appendSystemMessage(`Compaction failed: ${message}`);
@@ -788,6 +795,11 @@ function InteractiveChatApp({
 
   const resumeIntoSession = useCallback(
     (nextSession: StoredChatSession, sourceLabel: string) => {
+      // Switching mid-turn would let the old turn overwrite the resumed history when it ends.
+      if (loading) {
+        appendSystemMessage("Wait for the current request to finish first.");
+        return;
+      }
       const nextModel = nextSession.model || options.model;
       setActiveSession(nextSession);
       setCurrentModel(nextModel);
@@ -810,7 +822,9 @@ function InteractiveChatApp({
       setStatus(`Resumed ${nextSession.id.slice(0, 8)}`);
     },
     [
+      appendSystemMessage,
       currentModelLabel,
+      loading,
       options.acceptEdits,
       options.autoMode,
       options.yoloMode,
@@ -826,6 +840,10 @@ function InteractiveChatApp({
   }, []);
 
   const openResumeSelector = useCallback(() => {
+    if (loading) {
+      appendSystemMessage("Wait for the current request to finish first.");
+      return;
+    }
     const recent = listRecentSessions(20);
     if (recent.length === 0) {
       appendSystemMessage("No saved session found.");
@@ -838,7 +856,7 @@ function InteractiveChatApp({
     setSelectedResumeSessionIndex(0);
     setInput("");
     setStatus("Select a conversation to resume");
-  }, [appendSystemMessage]);
+  }, [appendSystemMessage, loading]);
 
   const closeModelSelector = useCallback((nextStatus = "Ready") => {
     setModelSelectorModels([]);
@@ -1041,8 +1059,16 @@ function InteractiveChatApp({
       const clipboard = copyToClipboard(card);
 
       if (outputPath) {
-        const resolvedPath = writeShareCard(card, outputPath, cwdValue);
-        appendSystemMessage(`Share card saved to ${resolvedPath}`);
+        try {
+          const resolvedPath = writeShareCard(card, outputPath, cwdValue);
+          appendSystemMessage(`Share card saved to ${resolvedPath}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          appendSystemMessage(`Could not save the share card: ${message}`);
+          setInput("");
+          setStatus("Share card not saved");
+          return;
+        }
       } else {
         setMessages((prev) => [...prev, { id: randomUUID(), role: "card", content: card }]);
       }
@@ -1091,9 +1117,13 @@ function InteractiveChatApp({
       }
 
       if (!trimmed.includes(" ") && commandSuggestions.length > 0) {
-        const topSuggestion = commandSuggestions[0];
-        if (topSuggestion) {
-          trimmed = topSuggestion.name;
+        // An exact command wins; otherwise run the suggestion the user moved the cursor to.
+        const exactSuggestion = commandSuggestions.find(
+          (suggestion) => suggestion.name === trimmed,
+        );
+        const chosenSuggestion = exactSuggestion ?? selectedCommandSuggestion;
+        if (chosenSuggestion) {
+          trimmed = chosenSuggestion.name;
         }
       }
 
@@ -1280,6 +1310,7 @@ function InteractiveChatApp({
       options.model,
       options.system,
       resumeIntoSession,
+      selectedCommandSuggestion,
       showUsage,
       showGitDiff,
       shareCurrentSession,
@@ -1437,6 +1468,14 @@ function InteractiveChatApp({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
+    const onResize = (): void => setTerminalRows(process.stdout.rows ?? DEFAULT_TERMINAL_ROWS);
+    process.stdout.on("resize", onResize);
+    return () => {
+      process.stdout.off("resize", onResize);
+    };
+  }, []);
+
+  useEffect(() => {
     let showDurationTimer: ReturnType<typeof setTimeout> | null = null;
     let clearStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1474,11 +1513,14 @@ function InteractiveChatApp({
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Box flexDirection="column">
-        {messages.map((message) => (
-          <MessageRow key={message.id} message={message} />
-        ))}
-      </Box>
+      {/* A selector plus the whole history can be taller than the terminal, which cuts off the top. */}
+      {isResumeSelectorOpen || isModelSelectorOpen ? null : (
+        <Box flexDirection="column">
+          {messages.map((message) => (
+            <MessageRow key={message.id} message={message} />
+          ))}
+        </Box>
+      )}
 
       <Box marginTop={0} flexDirection="column">
         {thinkingStatus !== null ? <ThinkingIndicator thinkingStatus={thinkingStatus} /> : null}
@@ -1509,9 +1551,14 @@ function InteractiveChatApp({
           <ResumeSelector
             sessions={resumeSelectorSessions}
             selectedIndex={selectedResumeSessionIndex}
+            maxRows={terminalRows}
           />
         ) : isModelSelectorOpen ? (
-          <ModelSelector models={modelSelectorModels} selectedIndex={selectedModelIndex} />
+          <ModelSelector
+            models={modelSelectorModels}
+            selectedIndex={selectedModelIndex}
+            maxRows={terminalRows}
+          />
         ) : null}
         {!pendingApproval && !isAutocompleteOpen && mentionCandidates.length > 0 ? (
           <Text color={COLORS.dim}>@ Tab: {mentionCandidates.join("  ")}</Text>
@@ -1724,21 +1771,40 @@ function PermissionApprovalDialog({
   );
 }
 
+// Rows used around a selector: root padding (2), thinking indicator (up to 2), input box (3),
+// footer (1), selector border (2) and title (1). Ink switches to a clear-everything render
+// mode once a frame reaches the terminal height and leaves stray lines when it shrinks again,
+// so the frame must stay at least one row shorter than the terminal; the extra row is slack.
+const SELECTOR_RESERVED_ROWS = 12;
+const FLIXA_MODEL_ROWS = 3;
+
+/** Returns the first index of a window of `count` items that keeps `selectedIndex` visible. */
+function getWindowStart(selectedIndex: number, total: number, count: number): number {
+  return Math.max(0, Math.min(selectedIndex - Math.floor(count / 2), total - count));
+}
+
 function ResumeSelector({
   sessions,
   selectedIndex,
+  maxRows,
 }: {
   sessions: readonly StoredChatSession[];
   selectedIndex: number;
+  maxRows: number;
 }): React.JSX.Element {
-  const visibleStartIndex = Math.max(0, Math.min(selectedIndex - 2, sessions.length - 6));
-  const visibleSessions = sessions.slice(visibleStartIndex, visibleStartIndex + 6);
+  const visibleCount = Math.max(1, Math.min(6, maxRows - SELECTOR_RESERVED_ROWS));
+  const visibleStartIndex = getWindowStart(selectedIndex, sessions.length, visibleCount);
+  const visibleSessions = sessions.slice(visibleStartIndex, visibleStartIndex + visibleCount);
 
   return (
     <Box borderStyle="round" borderColor={COLORS.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
-        <Text color={COLORS.assistant}>Resume Conversation</Text>
-        <Text color={COLORS.dim}>↑↓ select · Enter resume · Esc cancel</Text>
+        <Text color={COLORS.assistant} wrap="truncate">
+          Resume Conversation ({selectedIndex + 1}/{sessions.length})
+        </Text>
+        <Text color={COLORS.dim} wrap="truncate">
+          ↑↓ select · Enter resume · Esc cancel
+        </Text>
       </Box>
       {visibleSessions.map((session, index) => {
         const absoluteIndex = visibleStartIndex + index;
@@ -1757,18 +1823,30 @@ function ResumeSelector({
 function ModelSelector({
   models,
   selectedIndex,
+  maxRows,
 }: {
   models: ReadonlyArray<FlixaModelDefinition | ProviderModelOption>;
   selectedIndex: number;
+  maxRows: number;
 }): React.JSX.Element {
-  const visibleStartIndex = Math.max(0, Math.min(selectedIndex - 2, models.length - 5));
-  const visibleModels = models.slice(visibleStartIndex, visibleStartIndex + 5);
+  // Flixa models render a label plus two detail lines; provider models are one line.
+  const rowsPerModel = models.some((model) => "tier" in model) ? FLIXA_MODEL_ROWS : 1;
+  const visibleCount = Math.max(
+    1,
+    Math.min(8, Math.floor((maxRows - SELECTOR_RESERVED_ROWS) / rowsPerModel)),
+  );
+  const visibleStartIndex = getWindowStart(selectedIndex, models.length, visibleCount);
+  const visibleModels = models.slice(visibleStartIndex, visibleStartIndex + visibleCount);
 
   return (
     <Box borderStyle="round" borderColor={COLORS.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
-        <Text color={COLORS.assistant}>Select Model</Text>
-        <Text color={COLORS.dim}>↑↓ select · Enter apply · Esc cancel</Text>
+        <Text color={COLORS.assistant} wrap="truncate">
+          Select Model ({selectedIndex + 1}/{models.length})
+        </Text>
+        <Text color={COLORS.dim} wrap="truncate">
+          ↑↓ select · Enter apply · Esc cancel
+        </Text>
       </Box>
       {visibleModels.map((model, index) => {
         const absoluteIndex = visibleStartIndex + index;
@@ -1785,7 +1863,7 @@ function ModelSelector({
 
         return (
           <Box key={model.id} flexDirection="column">
-            <Text color={isSelected ? COLORS.assistant : COLORS.dim}>
+            <Text color={isSelected ? COLORS.assistant : COLORS.dim} wrap="truncate">
               {isSelected ? "> " : "  "}
               {model.label}
             </Text>

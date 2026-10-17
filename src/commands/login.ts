@@ -3,7 +3,13 @@ import open from "open";
 import { input, password, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import boxen from "boxen";
-import { deleteCredentials, getApiKey, loginWithDeviceAuth, saveApiKey } from "../auth/service.ts";
+import {
+  deleteCredentials,
+  getApiKey,
+  hasStoredCredentials,
+  loginWithDeviceAuth,
+  saveApiKey,
+} from "../auth/service.ts";
 import {
   getPersistedProviderBaseUrl,
   setDefaultProvider,
@@ -63,7 +69,7 @@ export function registerLoginCommand(program: Command): void {
     .action((options: LogoutCommandOptions) => {
       const provider = parseProvider(options.provider ?? "flixa");
       const providerDefinition = getProviderDefinition(provider);
-      const hadCredentials = Boolean(getApiKey(provider));
+      const hadCredentials = hasStoredCredentials(provider);
 
       deleteCredentials(provider);
 
@@ -188,15 +194,15 @@ async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Pro
     process.exit(1);
   }
 
-  const result = saveApiKey(provider, apiKey);
-
+  // Resolve the base URL before storing anything, so a failed login leaves no key behind.
+  let baseUrl = "";
   if (
     providerDefinition.defaultBaseUrl ||
     providerDefinition.baseUrlRequired ||
     provider === "custom-openai"
   ) {
     const persistedBaseUrl = getPersistedProviderBaseUrl(provider);
-    const baseUrl = (
+    baseUrl = (
       baseUrlOption ??
       (await input({
         message:
@@ -207,14 +213,17 @@ async function runApiKeyLogin(provider: ProviderId, baseUrlOption?: string): Pro
       }))
     ).trim();
 
-    if (baseUrl) {
-      setPersistedProviderBaseUrl(provider, baseUrl);
-    } else if (providerDefinition.baseUrlRequired || provider === "custom-openai") {
+    if (!baseUrl && (providerDefinition.baseUrlRequired || provider === "custom-openai")) {
       console.error(
         chalk.red("✗ Login failed:") + ` ${providerDefinition.displayName} requires a base URL.`,
       );
       process.exit(1);
     }
+  }
+
+  const result = saveApiKey(provider, apiKey);
+  if (baseUrl) {
+    setPersistedProviderBaseUrl(provider, baseUrl);
   }
 
   logSavedBackend(provider, result.backend, result.warning);

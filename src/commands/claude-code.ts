@@ -162,8 +162,16 @@ export function registerClaudeCodeCommand(program: Command): void {
 
       const apiKey = getApiKey(provider);
       // Only remove keys that look like ours, so a user's own key is never deleted.
-      const isOurs = (value: unknown): boolean =>
-        typeof value === "string" && (apiKey === null || apiKey === undefined || value === apiKey);
+      // Without a stored key (e.g. after logout) fall back to the Flixa key prefix.
+      const isOurs = (value: unknown): boolean => {
+        if (typeof value !== "string") {
+          return false;
+        }
+        if (apiKey) {
+          return value === apiKey;
+        }
+        return provider === "flixa" && value.startsWith("deni_");
+      };
 
       let totalChanged = 0;
 

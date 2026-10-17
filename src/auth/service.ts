@@ -22,6 +22,11 @@ export function getApiKey(provider: ProviderId = DEFAULT_PROVIDER): string | nul
   return loadSecret(provider);
 }
 
+/** True when a secret is stored for the provider, ignoring environment variables. */
+export function hasStoredCredentials(provider: ProviderId = DEFAULT_PROVIDER): boolean {
+  return loadSecret(provider) !== null;
+}
+
 export function saveApiKey(provider: ProviderId, apiKey: string): SaveResult {
   return saveSecret(apiKey, provider);
 }

@@ -1,7 +1,6 @@
 import { generateText, jsonSchema, streamText, tool, type ModelMessage } from "ai";
 import { createOpenResponses } from "@ai-sdk/open-responses";
 import { getApiKey } from "../auth/service.ts";
-import { getDefaultProvider } from "../config/store.ts";
 import { assertSecureBaseUrl } from "../security/url.ts";
 import { formatFlixaHttpError, rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
 import {
@@ -150,7 +149,7 @@ export function resolveFlixaApiKey(): string | null {
   const openAiCompatibleApiKey = process.env.OPENAI_API_KEY?.trim();
   if (openAiCompatibleApiKey) return openAiCompatibleApiKey;
 
-  return getApiKey(getDefaultProvider());
+  return getApiKey("flixa");
 }
 
 export async function fetchAvailableModels(options: {
@@ -475,7 +474,11 @@ export function resolveApiRoot(baseUrl?: string): string {
 }
 
 function isFlixaResponse(value: unknown): value is FlixaResponse {
-  return typeof value === "object" && value !== null;
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as { output?: unknown; output_text?: unknown };
+  return Array.isArray(candidate.output) || typeof candidate.output_text === "string";
 }
 
 function extractResponseDisplayParts(response: FlixaResponse): FlixaResponseDisplayParts {

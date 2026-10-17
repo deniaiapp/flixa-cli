@@ -14,12 +14,6 @@ or
 pnpm install -g @deniai/flixa
 ```
 
-or
-
-```sh
-bun install -g @deniai/flixa
-```
-
 ## Quick start
 
 ```sh
@@ -54,7 +48,7 @@ flixa providers list
 The bundled catalog can be refreshed during development with:
 
 ```sh
-bun run providers:update
+pnpm run providers:update
 ```
 
 Providers with an OpenAI-compatible endpoint use the shared agent runtime;
@@ -199,7 +193,7 @@ card you can paste into a PR or share online.
 
 ```sh
 flixa ship "Add a retry budget to the API client" --share
-flixa ship "Fix the failing login flow" --verify "bun run build" --share .flixa/ship-card.md
+flixa ship "Fix the failing login flow" --verify "pnpm run build" --share .flixa/ship-card.md
 flixa ship "Plan a migration to SQLite" --plan
 ```
 
@@ -369,10 +363,10 @@ flixa login --provider custom-openai --base-url http://your-endpoint/v1
 ## Development
 
 ```sh
-bun install
-bun run dev
-bun run build
-bun run check
-bun run lint
-bun run format
+pnpm install
+pnpm run dev
+pnpm run build
+pnpm run check
+pnpm run lint
+pnpm run format
 ```

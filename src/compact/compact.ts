@@ -57,7 +57,7 @@ export function createSummaryGenerator(options: {
         model: options.model,
         system,
         input: [{ role: "user", content: prompt }],
-        baseUrl: options.baseUrl,
+        baseUrl: options.baseUrl ?? options.context.baseUrl,
         maxOutputTokens: MAX_SUMMARY_OUTPUT_TOKENS,
         signal: options.signal,
         toolChoice: "none",
@@ -72,6 +72,7 @@ export function createSummaryGenerator(options: {
       system,
       prompt,
       maxOutputTokens: MAX_SUMMARY_OUTPUT_TOKENS,
+      signal: options.signal,
     });
     return result.text;
   };

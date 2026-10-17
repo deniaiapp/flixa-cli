@@ -54,7 +54,7 @@ export function buildInstructionSystemPrompt(
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
-function loadInstructionFiles(cwdValue: string): LoadedInstructionFile[] {
+export function loadInstructionFiles(cwdValue: string): LoadedInstructionFile[] {
   const root = resolve(cwdValue);
   const directories: string[] = [];
   let current = root;

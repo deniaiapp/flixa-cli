@@ -130,7 +130,7 @@ export const PROVIDERS: Record<string, ProviderDefinition> = {
 export const DEFAULT_PROVIDER: ProviderId = "flixa";
 
 export function isProviderId(value: string): value is ProviderId {
-  return typeof value === "string" && value in PROVIDERS;
+  return typeof value === "string" && Object.hasOwn(PROVIDERS, value);
 }
 
 export function getProviderDefinition(providerId: ProviderId): ProviderDefinition {

@@ -124,7 +124,7 @@ function applyChatOptions(command: Command): void {
     .option("-s, --system <prompt>", "System prompt")
     .option("--base-url <url>", "Override the API base URL for providers that support it")
     .option("--json", "Print the raw JSON response")
-    .option("--no-stream", "Disable streaming output")
+    .option("--no-stream", "Disable streaming output (responses are currently shown once complete)")
     .option("--max-output-tokens <tokens>", "Limit response tokens")
     .option("-c, --continue", "Continue the latest conversation in this directory")
     .option("-r, --resume [sessionId]", "Resume a conversation by session id or pick from recent")

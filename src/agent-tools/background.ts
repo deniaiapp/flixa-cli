@@ -265,7 +265,8 @@ function appendOutput(entry: BackgroundProcess, chunk: string): void {
   if (entry.buffer.length > MAX_BUFFER_CHARS) {
     const excess = entry.buffer.length - MAX_BUFFER_CHARS;
     entry.buffer = entry.buffer.slice(excess);
-    entry.droppedSinceRead += excess;
+    // Only characters the reader had not consumed yet count as lost.
+    entry.droppedSinceRead += Math.max(0, excess - entry.readOffset);
     entry.readOffset = Math.max(0, entry.readOffset - excess);
   }
 }

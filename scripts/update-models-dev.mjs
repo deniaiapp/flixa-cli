@@ -32,7 +32,7 @@ const providers = Object.values(catalog)
 
 const source = [
   "// Generated from https://models.dev/api.json.",
-  "// Refresh with: bun run providers:update",
+  "// Refresh with: pnpm run providers:update",
   "",
   "export interface ModelsDevGeneratedModel {",
   "  id: string;",

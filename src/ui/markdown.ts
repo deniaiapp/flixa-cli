@@ -1,6 +1,9 @@
 import chalk from "chalk";
 
 const INDENT = "  ";
+// Private-use character that stands in for an extracted code span while emphasis is parsed.
+const CODE_MARK = String.fromCharCode(0xe000);
+const CODE_MARK_PATTERN = new RegExp(`${CODE_MARK}(\\d+)${CODE_MARK}`, "g");
 
 export function renderMarkdownToLines(text: string): string[] {
   const lines = text.split(/\r?\n/);
@@ -76,19 +79,29 @@ export function renderMarkdownToLines(text: string): string[] {
 }
 
 function renderInlineMarkdown(line: string): string {
-  let output = line;
+  // Code spans are lifted out first so `_` and `*` inside them are never read as emphasis.
+  const codeSpans: string[] = [];
+  let output = line.replace(/`([^`]+)`/g, (_, code: string) => {
+    codeSpans.push(chalk.bgHex("#1f2430").cyan(` ${code} `));
+    return `${CODE_MARK}${codeSpans.length - 1}${CODE_MARK}`;
+  });
 
-  output = output.replace(/`([^`]+)`/g, (_, code: string) =>
-    chalk.bgHex("#1f2430").cyan(` ${code} `),
+  output = output.replace(/\*\*(?=\S)([^*]*?\S)\*\*/g, (_, strong: string) => chalk.bold(strong));
+  output = output.replace(
+    /(?<![A-Za-z0-9_])__(?=\S)([^_]*?\S)__(?![A-Za-z0-9_])/g,
+    (_, strong: string) => chalk.bold(strong),
   );
-  output = output.replace(/\*\*([^*]+)\*\*/g, (_, strong: string) => chalk.bold(strong));
-  output = output.replace(/__([^_]+)__/g, (_, strong: string) => chalk.bold(strong));
-  output = output.replace(/\*([^*]+)\*/g, (_, emphasis: string) => chalk.italic(emphasis));
-  output = output.replace(/_([^_]+)_/g, (_, emphasis: string) => chalk.italic(emphasis));
+  // An opening `*` must touch the text, so `2 * 3 * 4` stays arithmetic.
+  output = output.replace(/\*(?=\S)([^*]*?\S)\*/g, (_, emphasis: string) => chalk.italic(emphasis));
+  // Underscores inside identifiers (snake_case) are not emphasis.
+  output = output.replace(
+    /(?<![A-Za-z0-9_])_(?=\S)([^_]*?\S)_(?![A-Za-z0-9_])/g,
+    (_, emphasis: string) => chalk.italic(emphasis),
+  );
   output = output.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
     (_, label: string, url: string) => `${chalk.blue.underline(label)} ${chalk.dim(url)}`,
   );
 
-  return output;
+  return output.replace(CODE_MARK_PATTERN, (_, index: string) => codeSpans[Number(index)] ?? "");
 }

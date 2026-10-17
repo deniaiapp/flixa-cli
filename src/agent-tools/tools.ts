@@ -41,14 +41,19 @@ export interface ToolExecutionContext {
   allowFileEdits: boolean;
   /** Present only when the Task tool may run; sub-agents never get it. */
   runSubagent?: (request: SubagentRequest) => Promise<string>;
+  /** Aborting stops any shell process the tool started. */
+  signal?: AbortSignal;
 }
 
 let checkpointStore: CheckpointStore | null = null;
+let checkpointStoreRoot: string | null = null;
 
 /** Per-process store of file snapshots taken before Write/Edit, used by `/rewind`. */
 export function getCheckpointStore(workspaceRoot: string = process.cwd()): CheckpointStore {
-  if (!checkpointStore) {
+  const root = resolve(workspaceRoot);
+  if (!checkpointStore || checkpointStoreRoot !== root) {
     checkpointStore = new CheckpointStore(workspaceRoot);
+    checkpointStoreRoot = root;
   }
   return checkpointStore;
 }
@@ -574,6 +579,7 @@ async function runShellCommand(
   const result = await runProcess(executable, executableArgs, {
     cwd: context.workspaceRoot,
     timeoutMs,
+    signal: context.signal,
   });
   const ok = result.exit_code === 0 && !result.timed_out;
 
@@ -1048,8 +1054,13 @@ function resolveWorkspacePath(pathValue: string, workspaceRoot: string): string 
 // Hooks and config under .git run code on later git commands, so editing them
 // would bypass the approval required for Bash.
 function assertNotGitInternals(filePath: string, workspaceRoot: string): void {
-  const segments = relative(workspaceRoot, filePath).split(/[\\/]/);
-  if (segments.some((segment) => segment.toLowerCase() === ".git")) {
+  const isGitSegment = (segment: string): boolean => segment.toLowerCase() === ".git";
+  const logicalSegments = relative(workspaceRoot, filePath).split(/[\\/]/);
+  // A link inside the workspace can point at .git, so check where the path really lands too.
+  const realSegments = relative(realpathSync(workspaceRoot), resolveRealPath(filePath)).split(
+    /[\\/]/,
+  );
+  if (logicalSegments.some(isGitSegment) || realSegments.some(isGitSegment)) {
     throw new Error("Writing inside .git is not allowed.");
   }
 }
@@ -1216,6 +1227,7 @@ async function runProcess(
   options: {
     cwd: string;
     timeoutMs: number;
+    signal?: AbortSignal;
   },
 ): Promise<{
   stdout: string;
@@ -1224,19 +1236,88 @@ async function runProcess(
   timed_out: boolean;
 }> {
   return await new Promise((resolvePromise, reject) => {
+    if (options.signal?.aborted) {
+      reject(createProcessAbortError());
+      return;
+    }
+
     const child = spawn(executable, args, {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      // A process group lets us stop grandchildren that would otherwise keep the pipes open.
+      detached: process.platform !== "win32",
     });
 
     let stdout = "";
     let stderr = "";
     let resolved = false;
     let timedOut = false;
+    let forceTimer: NodeJS.Timeout | undefined;
+
+    const killTree = (): void => {
+      const pid = child.pid;
+      if (pid === undefined) {
+        child.kill();
+        return;
+      }
+      if (process.platform === "win32") {
+        try {
+          spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+        } catch {
+          child.kill();
+        }
+        return;
+      }
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      const escalate = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }, 2000);
+      escalate.unref();
+    };
+
+    const onAbort = (): void => {
+      clearTimeout(timeout);
+      killTree();
+      if (!resolved) {
+        resolved = true;
+        reject(createProcessAbortError());
+      }
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      if (forceTimer) {
+        clearTimeout(forceTimer);
+      }
+      options.signal?.removeEventListener("abort", onAbort);
+    };
 
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      killTree();
+      // Do not wait for `close`: a stubborn descendant can hold the pipes open indefinitely.
+      forceTimer = setTimeout(() => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        cleanup();
+        resolvePromise({
+          stdout: truncate(stdout),
+          stderr: truncate(stderr),
+          exit_code: null,
+          timed_out: true,
+        });
+      }, 3000);
     }, options.timeoutMs);
 
     // Keep only what truncate() can ever return; a chatty command must not exhaust memory.
@@ -1249,14 +1330,14 @@ async function runProcess(
       stderr = append(stderr, chunk);
     });
     child.on("error", (error) => {
-      clearTimeout(timeout);
+      cleanup();
       if (!resolved) {
         resolved = true;
         reject(error);
       }
     });
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      cleanup();
       if (resolved) {
         return;
       }
@@ -1269,4 +1350,10 @@ async function runProcess(
       });
     });
   });
+}
+
+function createProcessAbortError(): Error {
+  const error = new Error("Aborted");
+  error.name = "AbortError";
+  return error;
 }
