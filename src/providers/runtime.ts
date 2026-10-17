@@ -7,6 +7,7 @@ import {
   type ModelMessage,
   type ToolSet,
 } from "ai";
+import { randomUUID } from "node:crypto";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -73,6 +74,8 @@ export interface SharedAgentRunOptions {
   system?: string;
   prompt: string;
   history: ChatMessage[];
+  /** Stable per-conversation id, sent to gateways that route and cache by session. */
+  sessionId?: string;
   maxOutputTokens?: number;
   signal?: AbortSignal;
   autoMode?: boolean;
@@ -245,7 +248,25 @@ export function listConfiguredProviderIds(): ProviderId[] {
   return ids.filter((id) => isProviderConfigured(id));
 }
 
-export function createLanguageModel(context: ResolvedProviderContext): LanguageModel {
+// Fallback for callers without a conversation id: stable for the lifetime of this process.
+const PROCESS_SESSION_ID = randomUUID();
+
+/** OpenCode Zen/Go reject requests that carry no session id and a generic SDK user agent. */
+function isOpenCodeGateway(context: ResolvedProviderContext): boolean {
+  if (context.provider === "opencode" || context.provider === "opencode-go") {
+    return true;
+  }
+  try {
+    return context.baseUrl ? new URL(context.baseUrl).hostname.endsWith("opencode.ai") : false;
+  } catch {
+    return false;
+  }
+}
+
+export function createLanguageModel(
+  context: ResolvedProviderContext,
+  sessionId: string = PROCESS_SESSION_ID,
+): LanguageModel {
   const definition = getProviderDefinition(context.provider);
   if (definition.baseUrlRequired && !context.baseUrl) {
     throw new Error(
@@ -278,6 +299,13 @@ export function createLanguageModel(context: ResolvedProviderContext): LanguageM
                 "HTTP-Referer": "https://github.com/deniaiapp/flixa-cli",
                 "X-Title": "Flixa CLI",
               },
+            }
+          : {}),
+        ...(isOpenCodeGateway(context)
+          ? {
+              headers: { "x-opencode-session": sessionId },
+              // AI SDK sets User-Agent to `ai/...`; identify as this CLI instead.
+              fetch: createFlixaFetch(),
             }
           : {}),
       });
@@ -357,7 +385,7 @@ export async function runSharedAgentTurn(
   options: SharedAgentRunOptions,
 ): Promise<SharedAgentRunResult> {
   const context = resolveProviderContext(options);
-  const model = createLanguageModel(context);
+  const model = createLanguageModel(context, options.sessionId);
   const guards = options.guards ?? loadToolGuards(cwd());
   const allowTask = options.allowTask !== false;
   const toolContext: ToolExecutionContext = {

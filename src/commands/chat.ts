@@ -323,6 +323,7 @@ async function runSingleTurn(
         prompt: modelPrompt,
         guards,
         history: historyForTurn,
+        sessionId: session.id,
         system: turnSystemPrompt,
         maxOutputTokens: options.maxOutputTokens,
         planMode: options.planMode,

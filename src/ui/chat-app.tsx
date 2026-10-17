@@ -658,6 +658,7 @@ function InteractiveChatApp({
             model: providerContext.model,
             baseUrl: providerContext.baseUrl,
             history: historyForTurn,
+            sessionId: activeSession.id,
             prompt: modelPrompt,
             guards,
             system: turnSystemPrompt,
