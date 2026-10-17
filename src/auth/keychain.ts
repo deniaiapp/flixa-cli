@@ -278,7 +278,11 @@ export interface SaveResult {
   warning?: string;
 }
 
+// Decrypting a secret can spawn a process (DPAPI via PowerShell takes ~0.5s), so keep hits in memory.
+const secretCache = new Map<ProviderId, string>();
+
 export function saveSecret(secret: string, provider: ProviderId = DEFAULT_PROVIDER): SaveResult {
+  secretCache.delete(provider);
   const service = getServiceName(provider);
   const account = getAccountName();
 
@@ -318,6 +322,63 @@ export function saveSecret(secret: string, provider: ProviderId = DEFAULT_PROVID
 }
 
 export function loadSecret(provider: ProviderId = DEFAULT_PROVIDER): string | null {
+  const cached = secretCache.get(provider);
+  if (cached !== undefined) return cached;
+  const secret = loadSecretUncached(provider);
+  // Misses are not cached so a `flixa login` from another terminal is picked up.
+  if (secret !== null) secretCache.set(provider, secret);
+  return secret;
+}
+
+/** Cheap existence check that avoids decrypting where the platform allows it. */
+export function hasStoredSecret(provider: ProviderId = DEFAULT_PROVIDER): boolean {
+  if (secretCache.has(provider)) return true;
+  if (process.platform === "win32") {
+    return existsSync(getWinDpapiFile(provider)) || existsSync(getFallbackFile(provider));
+  }
+  return loadSecret(provider) !== null;
+}
+
+/**
+ * Decrypts every stored Windows DPAPI secret among `providers` with a single PowerShell run
+ * and fills the cache, instead of one ~0.5s process per provider. No-op elsewhere.
+ */
+export function primeStoredSecrets(providers: readonly ProviderId[]): void {
+  if (process.platform !== "win32") return;
+  const pending = providers.filter(
+    (provider) => !secretCache.has(provider) && existsSync(getWinDpapiFile(provider)),
+  );
+  if (pending.length === 0) return;
+
+  const paths = pending
+    .map(
+      (provider) => `'${escapePsSingleQuoted(getWinDpapiFile(provider).replace(/\\/g, "\\\\"))}'`,
+    )
+    .join(", ");
+  const script = `
+Add-Type -AssemblyName System.Security
+foreach ($inputPath in @(${paths})) {
+  try {
+    $encrypted = [System.IO.File]::ReadAllBytes($inputPath)
+    $bytes = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+    [Convert]::ToBase64String($bytes)
+  } catch {
+    ''
+  }
+}
+`;
+  const result = runPs1(script);
+  if (result.error || result.status !== 0) return;
+  const lines = result.stdout.split(/\r?\n/);
+  pending.forEach((provider, index) => {
+    const encoded = lines[index]?.trim();
+    if (!encoded) return;
+    const secret = Buffer.from(encoded, "base64").toString("utf-8").trim();
+    if (secret) secretCache.set(provider, secret);
+  });
+}
+
+function loadSecretUncached(provider: ProviderId): string | null {
   const service = getServiceName(provider);
   const account = getAccountName();
 
@@ -331,6 +392,7 @@ export function loadSecret(provider: ProviderId = DEFAULT_PROVIDER): string | nu
 }
 
 export function deleteSecret(provider: ProviderId = DEFAULT_PROVIDER): void {
+  secretCache.delete(provider);
   const service = getServiceName(provider);
   const account = getAccountName();
 

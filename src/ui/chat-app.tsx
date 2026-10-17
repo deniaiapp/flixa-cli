@@ -18,6 +18,7 @@ import {
   type FlixaModelDefinition,
 } from "../flixa/api.ts";
 import {
+  listConfiguredProviderIds,
   listProviderModelOptions,
   resolveApiKeyForProvider,
   resolveProviderContext,
@@ -1052,6 +1053,77 @@ function InteractiveChatApp({
     });
   }, [headerModelText]);
 
+  const collectSelectableModels = useCallback(async () => {
+    const current = resolveProviderContext({
+      provider: options.provider,
+      model: currentModel,
+      baseUrl: options.baseUrl,
+    });
+
+    // The active provider first, then every other provider that has credentials configured.
+    const configured = new Set(listConfiguredProviderIds());
+    const providers = listProviderDefinitions()
+      .filter((definition) => definition.runtime !== "external")
+      .filter((definition) => definition.id === current.provider || configured.has(definition.id))
+      .sort(
+        (left, right) =>
+          Number(right.id === current.provider) - Number(left.id === current.provider),
+      );
+
+    const results = await Promise.allSettled(
+      providers.map((definition): Promise<SelectableModel[]> => {
+        const isCurrent = definition.id === current.provider;
+        const context = isCurrent ? current : resolveProviderContext({ provider: definition.id });
+        const cacheKey = `${definition.id}|${context.baseUrl ?? ""}|${context.apiKey ?? ""}`;
+        const cached = modelListCache.get(cacheKey);
+        if (cached && Date.now() - cached.at < MODEL_LIST_CACHE_TTL_MS) {
+          return cached.models;
+        }
+
+        const models = withTimeout<Array<FlixaModelDefinition | ProviderModelOption>>(
+          definition.id === "flixa"
+            ? fetchAvailableModels({
+                apiKey: isCurrent ? apiKey : (context.apiKey ?? ""),
+                baseUrl: isCurrent ? options.baseUrl : context.baseUrl,
+              })
+            : listProviderModelOptions({
+                provider: definition.id,
+                model: isCurrent ? currentModel : undefined,
+                baseUrl: context.baseUrl,
+              }),
+          MODEL_LIST_TIMEOUT_MS,
+          `${definition.displayName} timed out`,
+        ).then((fetched) =>
+          fetched.map((model) => ({
+            ...model,
+            provider: definition.id,
+            providerName: definition.displayName,
+          })),
+        );
+        // Cache the in-flight promise so a warm-up and a manual open share one request.
+        modelListCache.set(cacheKey, { at: Date.now(), models });
+        models.catch(() => modelListCache.delete(cacheKey));
+        return models;
+      }),
+    );
+
+    return {
+      current,
+      models: results.flatMap((result) => (result.status === "fulfilled" ? result.value : [])),
+      failed: results.flatMap((result, index) =>
+        result.status === "rejected" ? [providers[index]?.displayName ?? "?"] : [],
+      ),
+    };
+  }, [apiKey, currentModel, options.baseUrl, options.provider]);
+
+  // Warm the cache shortly after startup so the first /model opens without waiting on the network.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      collectSelectableModels().catch(() => undefined);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [collectSelectableModels]);
+
   const openModelSelector = useCallback(async () => {
     if (loading) {
       appendSystemMessage("Wait for the current request to finish first.");
@@ -1062,50 +1134,7 @@ function InteractiveChatApp({
     setStatus("Loading models…");
 
     try {
-      const current = resolveProviderContext({
-        provider: options.provider,
-        model: currentModel,
-        baseUrl: options.baseUrl,
-      });
-
-      // The active provider first, then every other provider that has credentials configured.
-      const providers = listProviderDefinitions()
-        .filter((definition) => definition.runtime !== "external")
-        .filter((definition) => definition.id === current.provider || hasUsableKey(definition.id))
-        .sort(
-          (left, right) =>
-            Number(right.id === current.provider) - Number(left.id === current.provider),
-        );
-
-      const results = await Promise.allSettled(
-        providers.map(async (definition): Promise<SelectableModel[]> => {
-          const isCurrent = definition.id === current.provider;
-          const context = isCurrent ? current : resolveProviderContext({ provider: definition.id });
-          const models =
-            definition.id === "flixa"
-              ? await fetchAvailableModels({
-                  apiKey: isCurrent ? apiKey : (context.apiKey ?? ""),
-                  baseUrl: isCurrent ? options.baseUrl : context.baseUrl,
-                })
-              : await listProviderModelOptions({
-                  provider: definition.id,
-                  model: isCurrent ? currentModel : undefined,
-                  baseUrl: context.baseUrl,
-                });
-          return models.map((model) => ({
-            ...model,
-            provider: definition.id,
-            providerName: definition.displayName,
-          }));
-        }),
-      );
-
-      const models = results.flatMap((result) =>
-        result.status === "fulfilled" ? result.value : [],
-      );
-      const failed = results.flatMap((result, index) =>
-        result.status === "rejected" ? [providers[index]?.displayName ?? "?"] : [],
-      );
+      const { current, models, failed } = await collectSelectableModels();
       if (failed.length > 0) {
         appendSystemMessage(`Could not load models from: ${failed.join(", ")}`);
       }
@@ -1124,7 +1153,7 @@ function InteractiveChatApp({
       appendSystemMessage(`Failed to load models: ${message}`);
       setStatus("Model selector failed");
     }
-  }, [apiKey, appendSystemMessage, currentModel, loading, options.baseUrl, options.provider]);
+  }, [appendSystemMessage, collectSelectableModels, currentModel, loading]);
 
   const showUsage = useCallback(async () => {
     if (loading) {
@@ -2432,6 +2461,20 @@ function findModelSelectionIndex(
     (model) => sameProvider(model) && stripModelProvider(model.id) === currentModelSuffix,
   );
   return suffixIndex >= 0 ? suffixIndex : 0;
+}
+
+// Model lists change rarely, so reopening the selector reuses them for a few minutes.
+const MODEL_LIST_CACHE_TTL_MS = 5 * 60_000;
+// One slow or unreachable provider must not hold the whole selector back.
+const MODEL_LIST_TIMEOUT_MS = 6_000;
+const modelListCache = new Map<string, { at: number; models: Promise<SelectableModel[]> }>();
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** True when the provider has an API key (environment or stored) without throwing on bad config. */

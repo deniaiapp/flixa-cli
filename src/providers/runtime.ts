@@ -11,6 +11,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { getApiKey } from "../auth/service.ts";
+import { hasStoredSecret, primeStoredSecrets } from "../auth/keychain.ts";
 import {
   getDefaultProvider,
   getPersistedModel,
@@ -40,6 +41,7 @@ import {
 import {
   getProviderDefinition,
   isProviderId,
+  listProviderDefinitions,
   type ProviderDefinition,
   type ProviderId,
 } from "./registry.ts";
@@ -224,6 +226,23 @@ export function resolveApiKeyForProvider(provider: ProviderId): string | null {
   }
 
   return getApiKey(provider);
+}
+
+function isProviderConfigured(provider: ProviderId): boolean {
+  const environmentNames =
+    provider === "flixa"
+      ? ["FLIXA_API_KEY", "OPENAI_API_KEY"]
+      : (getProviderDefinition(provider).apiKeyEnvNames ?? []);
+  return (
+    environmentNames.some((name) => Boolean(process.env[name]?.trim())) || hasStoredSecret(provider)
+  );
+}
+
+/** Providers with an API key available, found without decrypting each secret one by one. */
+export function listConfiguredProviderIds(): ProviderId[] {
+  const ids = listProviderDefinitions().map((definition) => definition.id);
+  primeStoredSecrets(ids);
+  return ids.filter((id) => isProviderConfigured(id));
 }
 
 export function createLanguageModel(context: ResolvedProviderContext): LanguageModel {
