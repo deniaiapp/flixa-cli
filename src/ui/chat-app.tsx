@@ -19,6 +19,7 @@ import {
 } from "../flixa/api.ts";
 import {
   listProviderModelOptions,
+  resolveApiKeyForProvider,
   resolveProviderContext,
   runSharedAgentTurn,
   type ProviderModelOption,
@@ -33,7 +34,12 @@ import {
   loadSessionById,
   saveSession,
 } from "../sessions/store.ts";
-import { setPersistedModel, setPersistedModeDefaults } from "../config/store.ts";
+import {
+  setDefaultProvider,
+  setPersistedModel,
+  setPersistedModeDefaults,
+} from "../config/store.ts";
+import { listProviderDefinitions } from "../providers/registry.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import {
   expandCustomCommand,
@@ -90,6 +96,12 @@ type InteractiveChatAppProps = {
   apiKey: string;
   options: InteractiveChatOptions;
   session: StoredChatSession;
+};
+
+/** A selectable model tagged with the provider that serves it. */
+type SelectableModel = (FlixaModelDefinition | ProviderModelOption) & {
+  provider: string;
+  providerName: string;
 };
 
 type UiMessage = {
@@ -196,11 +208,30 @@ export async function runInteractiveChatApp(
 }
 
 function InteractiveChatApp({
-  apiKey,
-  options,
+  apiKey: initialApiKey,
+  options: initialOptions,
   session,
 }: InteractiveChatAppProps): React.JSX.Element {
   const { exit } = useApp();
+  // /model can switch providers mid-session; `options` and `apiKey` below follow the active one.
+  const [currentProvider, setCurrentProvider] = useState(initialOptions.provider);
+  const options = useMemo<InteractiveChatOptions>(
+    () =>
+      currentProvider === initialOptions.provider
+        ? initialOptions
+        : { ...initialOptions, provider: currentProvider, baseUrl: undefined },
+    [currentProvider, initialOptions],
+  );
+  const apiKey = useMemo(() => {
+    if (currentProvider === initialOptions.provider) {
+      return initialApiKey;
+    }
+    try {
+      return resolveProviderContext({ provider: currentProvider }).apiKey ?? "";
+    } catch {
+      return "";
+    }
+  }, [currentProvider, initialApiKey, initialOptions.provider]);
   const [input, setInput] = useState("");
   const [activeSession, setActiveSession] = useState<StoredChatSession>(session);
   const [messages, setMessages] = useState<UiMessage[]>(() =>
@@ -226,9 +257,7 @@ function InteractiveChatApp({
   const [selectedCommandSuggestionIndex, setSelectedCommandSuggestionIndex] = useState(0);
   const [resumeSelectorSessions, setResumeSelectorSessions] = useState<StoredChatSession[]>([]);
   const [selectedResumeSessionIndex, setSelectedResumeSessionIndex] = useState(0);
-  const [modelSelectorModels, setModelSelectorModels] = useState<
-    Array<FlixaModelDefinition | ProviderModelOption>
-  >([]);
+  const [modelSelectorModels, setModelSelectorModels] = useState<SelectableModel[]>([]);
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [terminalRows, setTerminalRows] = useState(process.stdout.rows ?? DEFAULT_TERMINAL_ROWS);
   const [thinkingStatus, setThinkingStatus] = useState<"thinking" | number | null>(null);
@@ -709,6 +738,7 @@ function InteractiveChatApp({
       loading,
       options.baseUrl,
       options.maxOutputTokens,
+      options.provider,
       options.rawSystem,
       options.stream,
       autoMode,
@@ -802,11 +832,18 @@ function InteractiveChatApp({
         appendSystemMessage("Wait for the current request to finish first.");
         return;
       }
+      const nextProvider =
+        nextSession.provider && hasUsableKey(nextSession.provider)
+          ? nextSession.provider
+          : options.provider;
+      if (nextProvider !== options.provider) {
+        setCurrentProvider(nextProvider);
+      }
       const nextModel = nextSession.model || options.model;
       setActiveSession(nextSession);
       setCurrentModel(nextModel);
       setCurrentModelLabel(nextModel);
-      setPersistedModel(nextModel, resolveProviderContext({ provider: options.provider }).provider);
+      setPersistedModel(nextModel, resolveProviderContext({ provider: nextProvider }).provider);
       setConversation(nextSession.history);
       setAutoMode(nextSession.autoMode ?? options.autoMode);
       setYoloMode(nextSession.yoloMode ?? options.yoloMode);
@@ -867,12 +904,21 @@ function InteractiveChatApp({
   }, []);
 
   const applyModelSelection = useCallback(
-    (nextModel: string, label?: string) => {
+    (nextModel: string, label?: string, nextProvider?: string) => {
+      const activeProvider = resolveProviderContext({ provider: options.provider }).provider;
+      const provider = resolveProviderContext({
+        provider: nextProvider ?? options.provider,
+      }).provider;
+      if (provider !== activeProvider) {
+        setCurrentProvider(provider);
+        setDefaultProvider(provider);
+      }
       setCurrentModel(nextModel);
       setCurrentModelLabel(label ?? nextModel);
-      setPersistedModel(nextModel, resolveProviderContext({ provider: options.provider }).provider);
+      setPersistedModel(nextModel, provider);
       const nextSession = {
         ...activeSession,
+        provider,
         model: nextModel,
         autoMode,
         yoloMode,
@@ -888,7 +934,15 @@ function InteractiveChatApp({
       );
       setStatus(`Model: ${label ?? nextModel}`);
     },
-    [acceptEdits, activeSession, appendSystemMessage, autoMode, yoloMode, planMode],
+    [
+      acceptEdits,
+      activeSession,
+      appendSystemMessage,
+      autoMode,
+      options.provider,
+      yoloMode,
+      planMode,
+    ],
   );
 
   useEffect(() => {
@@ -1008,23 +1062,53 @@ function InteractiveChatApp({
     setStatus("Loading models…");
 
     try {
-      const providerContext = resolveProviderContext({
+      const current = resolveProviderContext({
         provider: options.provider,
         model: currentModel,
         baseUrl: options.baseUrl,
       });
 
-      const models =
-        providerContext.provider === "flixa"
-          ? await fetchAvailableModels({
-              apiKey,
-              baseUrl: options.baseUrl,
-            })
-          : await listProviderModelOptions({
-              provider: providerContext.provider,
-              model: currentModel,
-              baseUrl: providerContext.baseUrl,
-            });
+      // The active provider first, then every other provider that has credentials configured.
+      const providers = listProviderDefinitions()
+        .filter((definition) => definition.runtime !== "external")
+        .filter((definition) => definition.id === current.provider || hasUsableKey(definition.id))
+        .sort(
+          (left, right) =>
+            Number(right.id === current.provider) - Number(left.id === current.provider),
+        );
+
+      const results = await Promise.allSettled(
+        providers.map(async (definition): Promise<SelectableModel[]> => {
+          const isCurrent = definition.id === current.provider;
+          const context = isCurrent ? current : resolveProviderContext({ provider: definition.id });
+          const models =
+            definition.id === "flixa"
+              ? await fetchAvailableModels({
+                  apiKey: isCurrent ? apiKey : (context.apiKey ?? ""),
+                  baseUrl: isCurrent ? options.baseUrl : context.baseUrl,
+                })
+              : await listProviderModelOptions({
+                  provider: definition.id,
+                  model: isCurrent ? currentModel : undefined,
+                  baseUrl: context.baseUrl,
+                });
+          return models.map((model) => ({
+            ...model,
+            provider: definition.id,
+            providerName: definition.displayName,
+          }));
+        }),
+      );
+
+      const models = results.flatMap((result) =>
+        result.status === "fulfilled" ? result.value : [],
+      );
+      const failed = results.flatMap((result, index) =>
+        result.status === "rejected" ? [providers[index]?.displayName ?? "?"] : [],
+      );
+      if (failed.length > 0) {
+        appendSystemMessage(`Could not load models from: ${failed.join(", ")}`);
+      }
 
       if (models.length === 0) {
         appendSystemMessage("No models available for this account.");
@@ -1033,7 +1117,7 @@ function InteractiveChatApp({
       }
 
       setModelSelectorModels(models);
-      setSelectedModelIndex(findModelSelectionIndex(models, currentModel));
+      setSelectedModelIndex(findModelSelectionIndex(models, currentModel, current.provider));
       setStatus("Select a model");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1425,7 +1509,7 @@ function InteractiveChatApp({
 
         if (key.return && selectedModel) {
           closeModelSelector();
-          applyModelSelection(selectedModel.id, selectedModel.label);
+          applyModelSelection(selectedModel.id, selectedModel.label, selectedModel.provider);
           return;
         }
       }
@@ -1830,7 +1914,10 @@ function PermissionApprovalDialog({
 // mode once a frame reaches the terminal height and leaves stray lines when it shrinks again,
 // so the frame must stay at least one row shorter than the terminal; the extra row is slack.
 const SELECTOR_RESERVED_ROWS = 12;
-const FLIXA_MODEL_ROWS = 3;
+// The model selector frame is root padding (2), border (2), title (1), input box (3), footer (1)
+// and the same one row of slack.
+const MODEL_SELECTOR_RESERVED_ROWS = 10;
+const MODEL_LABEL_MAX_WIDTH = 32;
 
 /** Returns the first index of a window of `count` items that keeps `selectedIndex` visible. */
 function getWindowStart(selectedIndex: number, total: number, count: number): number {
@@ -1879,18 +1966,19 @@ function ModelSelector({
   selectedIndex,
   maxRows,
 }: {
-  models: ReadonlyArray<FlixaModelDefinition | ProviderModelOption>;
+  models: readonly SelectableModel[];
   selectedIndex: number;
   maxRows: number;
 }): React.JSX.Element {
-  // Flixa models render a label plus two detail lines; provider models are one line.
-  const rowsPerModel = models.some((model) => "tier" in model) ? FLIXA_MODEL_ROWS : 1;
-  const visibleCount = Math.max(
-    1,
-    Math.min(8, Math.floor((maxRows - SELECTOR_RESERVED_ROWS) / rowsPerModel)),
-  );
+  // One row per model, so the list takes whatever height the terminal leaves.
+  const visibleCount = Math.max(1, maxRows - MODEL_SELECTOR_RESERVED_ROWS);
   const visibleStartIndex = getWindowStart(selectedIndex, models.length, visibleCount);
   const visibleModels = models.slice(visibleStartIndex, visibleStartIndex + visibleCount);
+  const labelWidth = Math.min(
+    MODEL_LABEL_MAX_WIDTH,
+    Math.max(...visibleModels.map((model) => model.label.length)),
+  );
+  const providerWidth = Math.max(...visibleModels.map((model) => model.providerName.length));
 
   return (
     <Box borderStyle="round" borderColor={COLORS.border} flexDirection="column" paddingX={1}>
@@ -1905,33 +1993,20 @@ function ModelSelector({
       {visibleModels.map((model, index) => {
         const absoluteIndex = visibleStartIndex + index;
         const isSelected = absoluteIndex === selectedIndex;
-        const isFlixaModel = "tier" in model;
-        const meta = [
-          model.id,
-          isFlixaModel ? model.tier : null,
-          ...("tags" in model && Array.isArray(model.tags) ? model.tags : []),
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        const secondaryLine = model.description || meta;
 
         return (
-          <Box key={model.id} flexDirection="column">
-            <Text color={isSelected ? COLORS.assistant : COLORS.dim} wrap="truncate">
+          <Text key={model.id} wrap="truncate">
+            <Text color={isSelected ? COLORS.assistant : COLORS.dim}>
               {isSelected ? "> " : "  "}
-              {model.label}
+              {truncateEnd(model.label, labelWidth).padEnd(labelWidth)}
             </Text>
-            {isFlixaModel && secondaryLine ? (
-              <Text color={isSelected ? COLORS.system : COLORS.dim} wrap="truncate">
-                {`  ${truncateEnd(secondaryLine, 84)}`}
-              </Text>
+            <Text color={COLORS.dim}>{`  ${model.providerName.padEnd(providerWidth)}`}</Text>
+            {model.description ? (
+              <Text
+                color={isSelected ? COLORS.system : COLORS.dim}
+              >{`  ${model.description}`}</Text>
             ) : null}
-            {isFlixaModel && meta ? (
-              <Text color={COLORS.dim} wrap="truncate">
-                {`  ${truncateEnd(meta, 84)}`}
-              </Text>
-            ) : null}
-          </Box>
+          </Text>
         );
       })}
     </Box>
@@ -2342,19 +2417,30 @@ function getNextFooterMode(currentMode: FooterModeKey | null): FooterModeKey {
 }
 
 function findModelSelectionIndex(
-  models: ReadonlyArray<FlixaModelDefinition | ProviderModelOption>,
+  models: readonly SelectableModel[],
   currentModel: string,
+  currentProvider: string,
 ): number {
-  const exactIndex = models.findIndex((model) => model.id === currentModel);
+  const sameProvider = (model: SelectableModel): boolean => model.provider === currentProvider;
+  const exactIndex = models.findIndex((model) => sameProvider(model) && model.id === currentModel);
   if (exactIndex >= 0) {
     return exactIndex;
   }
 
   const currentModelSuffix = stripModelProvider(currentModel);
   const suffixIndex = models.findIndex(
-    (model) => stripModelProvider(model.id) === currentModelSuffix,
+    (model) => sameProvider(model) && stripModelProvider(model.id) === currentModelSuffix,
   );
   return suffixIndex >= 0 ? suffixIndex : 0;
+}
+
+/** True when the provider has an API key (environment or stored) without throwing on bad config. */
+function hasUsableKey(provider: string): boolean {
+  try {
+    return Boolean(resolveApiKeyForProvider(provider));
+  } catch {
+    return false;
+  }
 }
 
 function stripModelProvider(modelId: string): string {
