@@ -56,7 +56,7 @@ const BUILTIN_PROVIDERS: Record<string, ProviderDefinition> = {
     displayName: "Anthropic",
     authType: "apiKey",
     runtime: "anthropic",
-    defaultBaseUrl: "https://api.anthropic.com",
+    defaultBaseUrl: "https://api.anthropic.com/v1",
     defaultModel: "claude-sonnet-4-0",
     apiKeyEnvNames: ["ANTHROPIC_API_KEY"],
     source: "builtin",
@@ -78,7 +78,7 @@ const BUILTIN_PROVIDERS: Record<string, ProviderDefinition> = {
     id: "openrouter",
     displayName: "OpenRouter",
     authType: "apiKey",
-    runtime: "openai-responses",
+    runtime: "openai-chat",
     defaultBaseUrl: "https://openrouter.ai/api/v1",
     defaultModel: "openai/gpt-4.1",
     apiKeyEnvNames: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"],
@@ -88,7 +88,7 @@ const BUILTIN_PROVIDERS: Record<string, ProviderDefinition> = {
     id: "custom-openai",
     displayName: "Custom OpenAI-Compatible",
     authType: "apiKey",
-    runtime: "openai-responses",
+    runtime: "openai-chat",
     defaultModel: "gpt-4.1",
     baseUrlRequired: true,
     apiKeyEnvNames: ["OPENAI_API_KEY"],
@@ -100,7 +100,9 @@ const CATALOG_PROVIDERS: Record<string, ProviderDefinition> = Object.fromEntries
   listProviderCatalogRecords()
     .filter((provider) => !(provider.id in BUILTIN_PROVIDERS))
     .map((provider) => {
-      const defaultModel = provider.models[0]?.id || "gpt-4.1";
+      // The agent loop needs tool calling, so prefer a model that supports it.
+      const defaultModel =
+        (provider.models.find((model) => model.toolCall) ?? provider.models[0])?.id || "gpt-4.1";
       const defaultBaseUrl = resolveCatalogBaseUrl(provider);
       const requiresEnvironment = provider.runtime === "external";
       return [

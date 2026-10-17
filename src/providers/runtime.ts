@@ -9,6 +9,8 @@ import {
 } from "ai";
 import { randomUUID } from "node:crypto";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createMistral } from "@ai-sdk/mistral";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { getApiKey } from "../auth/service.ts";
@@ -46,7 +48,7 @@ import {
   type ProviderDefinition,
   type ProviderId,
 } from "./registry.ts";
-import { assertSecureBaseUrl } from "../security/url.ts";
+import { assertSecureBaseUrl, isLoopbackUrl } from "../security/url.ts";
 import type { ChatMessage } from "../flixa/api.ts";
 import { createFlixaFetch, getFlixaCliClientHeaders } from "../http/flixaClientHeaders.ts";
 import { rethrowAsUserFacingFlixaError } from "../http/flixaApiErrors.ts";
@@ -196,7 +198,9 @@ export function resolveProviderContext(
     options.baseUrl?.trim() || getPersistedProviderBaseUrl(provider) || definition.defaultBaseUrl;
   const baseUrl = rawBaseUrl ? assertSecureBaseUrl(rawBaseUrl) : rawBaseUrl;
 
-  const apiKey = resolveApiKeyForProvider(provider);
+  // Local servers (LM Studio, llama.cpp...) take no key; the SDK still needs a non-empty one.
+  const apiKey =
+    resolveApiKeyForProvider(provider) ?? (baseUrl && isLoopbackUrl(baseUrl) ? "local" : null);
 
   return {
     provider,
@@ -288,16 +292,34 @@ export function createLanguageModel(
   }
 
   switch (context.runtime) {
-    case "openai-responses":
     case "openai-chat": {
-      const openai = createOpenAI({
+      // `@ai-sdk/openai` drops reasoning parts, so thinking models (DeepSeek, Kimi, GLM, Qwen...)
+      // reject the follow-up request of a tool loop. The compatible provider reads
+      // `reasoning_content` from responses and sends it back on assistant messages.
+      if (!context.baseUrl) {
+        throw new Error(`${context.displayName} requires a base URL. Pass --base-url.`);
+      }
+      if (context.provider === "mistral") {
+        // Mistral returns/accepts reasoning as `thinking` content chunks, which only its own SDK maps.
+        return createMistral({
+          apiKey,
+          baseURL: normalizeOpenAiBaseUrl(context.baseUrl),
+        }).chat(context.model);
+      }
+      return createOpenAICompatible({
+        name: context.provider,
         apiKey,
-        ...(context.baseUrl ? { baseURL: normalizeOpenAiBaseUrl(context.baseUrl) } : {}),
+        baseURL: normalizeOpenAiBaseUrl(context.baseUrl),
+        includeUsage: true,
+        // Groq and Cerebras expect prior reasoning under `reasoning`, not `reasoning_content`.
+        ...(REASONING_FIELD_PROVIDERS.has(context.provider)
+          ? { transformRequestBody: renameReasoningContentField }
+          : {}),
         ...(context.provider === "openrouter"
           ? {
               headers: {
-                "HTTP-Referer": "https://github.com/deniaiapp/flixa-cli",
-                "X-Title": "Flixa CLI",
+                "HTTP-Referer": OPENROUTER_REFERER,
+                "X-Title": OPENROUTER_TITLE,
               },
             }
           : {}),
@@ -308,10 +330,14 @@ export function createLanguageModel(
               fetch: createFlixaFetch(),
             }
           : {}),
+      }).chatModel(context.model);
+    }
+    case "openai-responses": {
+      const openai = createOpenAI({
+        apiKey,
+        ...(context.baseUrl ? { baseURL: normalizeOpenAiBaseUrl(context.baseUrl) } : {}),
       });
-      return context.runtime === "openai-responses"
-        ? openai.responses(context.model)
-        : openai.chat(context.model);
+      return openai.responses(context.model);
     }
     case "flixa": {
       const anthropic = createAnthropic({
@@ -325,8 +351,9 @@ export function createLanguageModel(
     }
     case "anthropic": {
       const anthropic = createAnthropic({
-        apiKey,
-        ...(context.baseUrl ? { baseURL: context.baseUrl } : {}),
+        // MiniMax's Anthropic-compatible endpoint documents Bearer auth instead of `x-api-key`.
+        ...(context.provider.startsWith("minimax") ? { authToken: apiKey } : { apiKey }),
+        ...(context.baseUrl ? { baseURL: normalizeAnthropicBaseUrl(context.baseUrl) } : {}),
       });
       return anthropic(context.model);
     }
@@ -1000,6 +1027,39 @@ function normalizeOpenAiBaseUrl(baseUrl: string): string {
   return normalized.endsWith("/chat/completions")
     ? normalized.slice(0, -"/chat/completions".length)
     : normalized;
+}
+
+const REASONING_FIELD_PROVIDERS: ReadonlySet<string> = new Set(["groq", "cerebras"]);
+
+function renameReasoningContentField(body: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(body["messages"])) {
+    return body;
+  }
+  return {
+    ...body,
+    messages: body["messages"].map((message: unknown) => {
+      if (
+        !message ||
+        typeof message !== "object" ||
+        (message as { role?: unknown }).role !== "assistant" ||
+        !("reasoning_content" in message)
+      ) {
+        return message;
+      }
+      const { reasoning_content, ...rest } = message as Record<string, unknown>;
+      return { ...rest, reasoning: reasoning_content };
+    }),
+  };
+}
+
+/** The SDK appends `/messages`, so a bare host such as https://api.anthropic.com needs `/v1`. */
+function normalizeAnthropicBaseUrl(baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  try {
+    return new URL(normalized).pathname === "/" ? `${normalized}/v1` : normalized;
+  } catch {
+    return normalized;
+  }
 }
 
 function resolveAnthropicModelsUrl(baseUrl?: string): string {

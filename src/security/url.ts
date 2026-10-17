@@ -1,5 +1,13 @@
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
+export function isLoopbackUrl(baseUrl: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(baseUrl).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * API keys are sent as bearer tokens to the configured base URL, so refuse anything
  * that would put them on the wire in cleartext. Loopback http:// stays allowed for
