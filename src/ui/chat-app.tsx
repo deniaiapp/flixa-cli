@@ -216,6 +216,8 @@ function InteractiveChatApp({
   const [loading, setLoading] = useState(false);
   const [currentModel, setCurrentModel] = useState(session.model || options.model);
   const [currentModelLabel, setCurrentModelLabel] = useState(session.model || options.model);
+  const [planLabel, setPlanLabel] = useState<string | null>(null);
+  const headerModelText = formatHeaderModelLine(currentModelLabel, planLabel);
   const initialModes = useMemo(() => getInitialModes(options, session), [options, session]);
   const [autoMode, setAutoMode] = useState(initialModes.autoMode);
   const [yoloMode, setYoloMode] = useState(initialModes.yoloMode);
@@ -324,13 +326,13 @@ function InteractiveChatApp({
       abortRef.current?.abort();
       abortRef.current = null;
       setMessages([
-        buildHeaderMessage(currentModelLabel, cwdValue),
+        buildHeaderMessage(headerModelText, cwdValue),
         ...(reason ? [{ id: randomUUID(), role: "system" as const, content: reason }] : []),
       ]);
       setConversation([]);
       setStatus("Conversation cleared");
     },
-    [currentModelLabel, cwdValue],
+    [headerModelText, cwdValue],
   );
 
   const startFreshConversation = useCallback(() => {
@@ -351,7 +353,7 @@ function InteractiveChatApp({
     saveSession(nextSession);
     resetTodos();
     setActiveSession(nextSession);
-    setMessages(buildInitialMessages([], currentModel, nextSession.cwd, currentModelLabel));
+    setMessages(buildInitialMessages([], currentModel, nextSession.cwd, headerModelText));
     setConversation([]);
     setInput("");
     setStatus("Ready");
@@ -360,7 +362,7 @@ function InteractiveChatApp({
     autoMode,
     yoloMode,
     currentModel,
-    currentModelLabel,
+    headerModelText,
     cwdValue,
     options.system,
     planMode,
@@ -817,13 +819,13 @@ function InteractiveChatApp({
           role: "system",
           content: `Switched to ${sourceLabel}: ${nextSession.id.slice(0, 8)}`,
         },
-        ...buildInitialMessages(nextSession.history, nextModel, nextSession.cwd, currentModelLabel),
+        ...buildInitialMessages(nextSession.history, nextModel, nextSession.cwd, headerModelText),
       ]);
       setStatus(`Resumed ${nextSession.id.slice(0, 8)}`);
     },
     [
       appendSystemMessage,
-      currentModelLabel,
+      headerModelText,
       loading,
       options.acceptEdits,
       options.autoMode,
@@ -943,6 +945,58 @@ function InteractiveChatApp({
       canceled = true;
     };
   }, [apiKey, currentModel, options.baseUrl, options.provider]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    const syncPlanLabel = async (): Promise<void> => {
+      try {
+        const providerContext = resolveProviderContext({
+          provider: options.provider,
+          model: currentModel,
+          baseUrl: options.baseUrl,
+        });
+        if (providerContext.provider !== "flixa") {
+          setPlanLabel(providerContext.displayName);
+          return;
+        }
+
+        const usage = await fetchDeniUsage({ apiKey, baseUrl: options.baseUrl });
+        if (!canceled) {
+          setPlanLabel(formatFlixaPlanLabel(usage.tier, usage.isTeam));
+        }
+      } catch {
+        if (!canceled) {
+          setPlanLabel("Flixa");
+        }
+      }
+    };
+
+    void syncPlanLabel();
+
+    return () => {
+      canceled = true;
+    };
+  }, [apiKey, currentModel, options.baseUrl, options.provider]);
+
+  // The header is created before the model label and plan resolve, so refresh its model line in place.
+  useEffect(() => {
+    setMessages((prev) => {
+      const index = prev.findLastIndex((message) => message.role === "header");
+      const header = prev[index];
+      if (!header) {
+        return prev;
+      }
+      const lines = header.content.split("\n");
+      if (lines[1] === undefined || lines[1].endsWith(headerModelText)) {
+        return prev;
+      }
+      lines[1] = `${LOGO_LINES[1]}  ${headerModelText}`;
+      return prev.map((message, i) =>
+        i === index ? { ...message, content: lines.join("\n") } : message,
+      );
+    });
+  }, [headerModelText]);
 
   const openModelSelector = useCallback(async () => {
     if (loading) {
@@ -1942,6 +1996,15 @@ function buildHeaderMessage(modelLabel: string, cwdValue: string): UiMessage {
       `${LOGO_LINES[2]}  ${truncateMiddle(cwdValue, 64)}`,
     ].join("\n"),
   };
+}
+
+function formatHeaderModelLine(modelLabel: string, planLabel: string | null): string {
+  return planLabel ? `${modelLabel} · ${planLabel}` : modelLabel;
+}
+
+function formatFlixaPlanLabel(tier: string, isTeam: boolean): string {
+  const tierName = tier ? `${tier.charAt(0).toUpperCase()}${tier.slice(1)}` : "";
+  return ["Flixa", tierName, isTeam ? "Team" : ""].filter(Boolean).join(" ");
 }
 
 function truncateMiddle(value: string, maxLength: number): string {
