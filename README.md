@@ -111,6 +111,86 @@ flixa chat
 flixa chat --provider anthropic
 ```
 
+Inside chat:
+
+- `/compact [focus]` summarizes the conversation to free up context. Long
+  conversations are also compacted automatically once they pass about 240,000
+  characters; set `FLIXA_AUTO_COMPACT_CHARS` to change the limit (`0` disables it).
+- Custom slash commands are Markdown files in `.claude/commands/` or
+  `.flixa/commands/` (project) and the same folders under your home directory.
+  `review.md` becomes `/review`, `frontend/lint.md` becomes `/frontend:lint`.
+  Use `$ARGUMENTS` or `$1`..`$9` for arguments and an optional `description:` /
+  `argument-hint:` frontmatter. Built-in commands are never overridden.
+- The agent can keep a task list (`TodoWrite`) and read public web pages
+  (`WebFetch`, asks for approval, blocks private and local addresses).
+- `@path/to/file` attaches a file (or a directory listing) to your prompt. Press
+  Tab to complete paths. Only files inside the workspace are attached.
+- `# note` saves a note to `AGENTS.md` (or `CLAUDE.md` if that is the file you
+  have). `/memory user <note>` saves a personal note to `~/.flixa/AGENTS.md`.
+- `/rewind [turns|list]` undoes the agent's file edits for the last turns
+  (files only, the conversation stays). `/export [path]` saves the conversation
+  as Markdown. `/doctor` checks your setup (also `flixa doctor`).
+- The agent can start background commands (`Bash` with `run_in_background`, then
+  `BashOutput` / `KillShell`), delegate work to sub-agents (`Task`), and load
+  skills (`Skill`).
+- `/agents`, `/skills`, `/permissions` and `/hooks` show what is configured.
+
+#### Sub-agents and skills
+
+- Sub-agents are Markdown files in `.claude/agents/` or `.flixa/agents/` with
+  `description:` (required), `tools:` and `model:` frontmatter; the body is the
+  system prompt. `general-purpose` and read-only `explore` are built in.
+  Sub-agents cannot start other sub-agents.
+- Skills are `.claude/skills/<name>/SKILL.md` or `.flixa/skills/<name>/SKILL.md`
+  with a `description:`. Only names and descriptions go into the prompt; the
+  agent loads the full text on demand.
+
+#### Permission rules and hooks
+
+Put them in `settings.json` (`~/.flixa/`, `~/.claude/`, or a project's
+`.claude/` / `.flixa/`, plus `settings.local.json`):
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(pnpm test:*)", "Read(src/**)", "WebFetch(domain:docs.example.com)"],
+    "ask": ["Write(docs/**)"],
+    "deny": ["Read(.env)", "Bash(git push:*)"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "pnpm run format" }] }
+    ]
+  }
+}
+```
+
+`deny` beats `ask`, and `ask` beats `allow`. A compound command such as
+`pnpm test && curl ...` is allowed only if every part is allowed. Rules for
+`Read`/`Write`/`Edit`/`Grep`/`Glob` apply to those tools only; they do not stop a
+shell command from reading the same file.
+
+Hooks run `PreToolUse`, `PostToolUse`, `UserPromptSubmit` and `Stop` commands with
+a JSON payload on stdin. Exit code 2 blocks the action and sends stderr back.
+
+A cloned repository must not be able to run code or pre-approve commands just by
+being opened, so:
+
+- Hooks load only from your user-level settings. Set `FLIXA_TRUST_PROJECT_HOOKS=1`
+  to also load project hooks.
+- Project-level `deny` and `ask` rules always apply, but project-level `allow`
+  rules are ignored unless `FLIXA_TRUST_PROJECT_SETTINGS=1`.
+
+Run once without the interactive UI. Only the final answer goes to stdout, and
+tool progress goes to stderr, so the output is safe to pipe. Tools that need
+approval are denied unless you pass `--yolo`, `--auto`, or `--accept-edits`.
+
+```sh
+flixa --print "Summarize the last commit"
+git diff | flixa --print "Review this diff"
+flixa --print "/review src/index.ts"
+```
+
 ### Ship mode
 
 Run a complete coding mission from one prompt. Ship mode inspects the repo,

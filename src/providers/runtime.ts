@@ -18,8 +18,17 @@ import {
 import {
   executeToolCall,
   getAgentToolDefinitions,
+  type SubagentRequest,
   type ToolExecutionContext,
 } from "../agent-tools/tools.ts";
+import {
+  getPermissionDenial,
+  loadToolGuards,
+  runPostToolUseHooks,
+  runPreToolUseHooks,
+  type ToolGuards,
+} from "../agent-tools/guards.ts";
+import { findSubagent, loadSubagents, resolveSubagentTools } from "../subagents/definitions.ts";
 import {
   getToolApprovalRequest,
   getToolSafetyReviewRequest,
@@ -70,6 +79,12 @@ export interface SharedAgentRunOptions {
   requestToolApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
   reviewToolSafety?: (request: ToolApprovalRequest) => Promise<ToolSafetyReviewResult>;
   onEvent?: (event: SharedAgentRunEvent) => void;
+  /** Permission rules and hooks; loaded from settings when omitted. */
+  guards?: ToolGuards;
+  /** Offer the Task tool. Sub-agents run with this off so they cannot nest. */
+  allowTask?: boolean;
+  /** Restrict the offered tools to these names (used for sub-agents). */
+  allowedTools?: readonly string[];
 }
 
 export type SharedAgentRunEvent =
@@ -318,14 +333,24 @@ export async function runSharedAgentTurn(
 ): Promise<SharedAgentRunResult> {
   const context = resolveProviderContext(options);
   const model = createLanguageModel(context);
+  const guards = options.guards ?? loadToolGuards(cwd());
+  const allowTask = options.allowTask !== false;
   const toolContext: ToolExecutionContext = {
     workspaceRoot: cwd(),
     allowShell: options.planMode !== true,
     allowFileEdits: options.planMode !== true,
+    ...(allowTask
+      ? {
+          runSubagent: (request: SubagentRequest) =>
+            runSharedSubagentTurn(request, options, guards),
+        }
+      : {}),
   };
   const toolDefinitions = getAgentToolDefinitions({
     allowShell: toolContext.allowShell,
     allowFileEdits: toolContext.allowFileEdits,
+    allowTask,
+    allowedTools: options.allowedTools,
   });
   const tools: ToolSet = Object.fromEntries(
     toolDefinitions.map((definition) => [
@@ -344,7 +369,22 @@ export async function runSharedAgentTurn(
             yoloMode: options.yoloMode,
             acceptEdits: options.acceptEdits,
             planMode: options.planMode,
+            guards,
           };
+
+          const preflightDenial =
+            getPermissionDenial(guards, definition.name, argumentsText) ??
+            (await runPreToolUseHooks(guards, definition.name, argumentsText, options.signal));
+          if (preflightDenial) {
+            const denied = createSharedDeniedToolResult(definition.name, summary, preflightDenial);
+            options.onEvent?.({
+              type: "tool_result",
+              toolName: definition.name,
+              summary: denied.summary,
+              output: denied.output,
+            });
+            return denied.output;
+          }
 
           if (!options.yoloMode) {
             const safetyRequest = getToolSafetyReviewRequest(
@@ -422,7 +462,14 @@ export async function runSharedAgentTurn(
               summary: result.summary,
               output: result.output,
             });
-            return result.output;
+            const hookFeedback = await runPostToolUseHooks(
+              guards,
+              definition.name,
+              argumentsText,
+              result.output,
+              options.signal,
+            );
+            return `${result.output}${hookFeedback}`;
           } catch (error) {
             if (options.signal?.aborted || isAbortError(error)) {
               throw error;
@@ -475,6 +522,40 @@ export async function runSharedAgentTurn(
     }
     throw error;
   }
+}
+
+async function runSharedSubagentTurn(
+  request: SubagentRequest,
+  parent: SharedAgentRunOptions,
+  guards: ToolGuards,
+): Promise<string> {
+  const definitions = loadSubagents(cwd());
+  const definition = findSubagent(definitions, request.subagentType);
+  if (!definition) {
+    throw new Error(
+      `Unknown subagent type "${request.subagentType}". Available: ${definitions
+        .map((candidate) => candidate.name)
+        .join(", ")}`,
+    );
+  }
+
+  const toolNames = getAgentToolDefinitions({ allowTask: false }).map((tool) => tool.name);
+  const result = await runSharedAgentTurn({
+    ...parent,
+    history: [],
+    prompt: request.prompt,
+    system: [definition.systemPrompt, parent.system].filter(Boolean).join("\n\n"),
+    allowTask: false,
+    allowedTools: resolveSubagentTools(definition, toolNames),
+    guards,
+    onEvent: (event) => {
+      if (event.type === "tool_start" || event.type === "tool_result") {
+        parent.onEvent?.({ ...event, summary: `↳ ${event.summary}` });
+      }
+    },
+  });
+
+  return result.text;
 }
 
 function createSharedDeniedToolResult(

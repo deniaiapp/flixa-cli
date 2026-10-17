@@ -20,6 +20,14 @@ import {
 } from "../agent-tools/runner.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
 import { runInteractiveChatApp } from "../ui/chat-app.tsx";
+import { resolveCustomCommandPrompt } from "../slash/custom-commands.ts";
+import { loadToolGuards, prepareUserPrompt } from "../agent-tools/guards.ts";
+import {
+  compactHistory,
+  createSummaryGenerator,
+  formatCompactResult,
+  shouldAutoCompact,
+} from "../compact/compact.ts";
 import { getPersistedModeDefaults, getPersistedModel, setPersistedModel } from "../config/store.ts";
 import {
   createSession,
@@ -46,6 +54,7 @@ type RawChatOptions = {
   plan?: boolean;
   acceptEdits?: boolean;
   yolo?: boolean;
+  print?: boolean;
 };
 
 type ChatOptions = {
@@ -65,6 +74,7 @@ type ChatOptions = {
   acceptEdits: boolean;
   modeOverride: FooterModeOverride;
   yolo: boolean;
+  print: boolean;
 };
 
 type FooterModeOverride = "default" | "accept-edits" | "plan" | "auto" | "yolo" | null;
@@ -122,7 +132,11 @@ function applyChatOptions(command: Command): void {
     .option("--yolo-mode", "Start in yolo mode")
     .option("--plan", "Start in plan mode")
     .option("--accept-edits", "Start in accept edits mode")
-    .option("--yolo", "Always allow approvals for one-shot runs");
+    .option("--yolo", "Always allow approvals for one-shot runs")
+    .option(
+      "--print",
+      "Non-interactive: print only the final answer to stdout (progress goes to stderr)",
+    );
 }
 
 async function runChatCommand(promptParts: string[], rawOptions: RawChatOptions): Promise<void> {
@@ -148,8 +162,13 @@ async function runChatCommand(promptParts: string[], rawOptions: RawChatOptions)
   const promptFromArgs = promptParts.join(" ").trim();
   const promptFromStdin = promptFromArgs ? null : await readPromptFromStdin();
 
+  if (options.print && !promptFromArgs && !promptFromStdin) {
+    throw new Error("--print requires a prompt: pass it as an argument or pipe it on stdin.");
+  }
+
   if (promptFromArgs || promptFromStdin) {
-    const prompt = promptFromArgs || promptFromStdin || "";
+    const rawPrompt = promptFromArgs || promptFromStdin || "";
+    const prompt = resolveCustomCommandPrompt(rawPrompt, session.cwd || cwd()) ?? rawPrompt;
     options.system = buildInstructionSystemPrompt(session.cwd || cwd(), options.rawSystem, prompt);
     await runSingleTurn(apiKey, options, session, prompt);
     return;
@@ -208,6 +227,7 @@ function normalizeOptions(rawOptions: RawChatOptions): ChatOptions {
     acceptEdits: modeFlags.acceptEdits,
     modeOverride: modeFlags.modeOverride,
     yolo: rawOptions.yolo ?? false,
+    print: rawOptions.print ?? false,
   };
 }
 
@@ -247,18 +267,62 @@ async function runSingleTurn(
     prompt,
   );
 
-  if (!options.json) {
+  // In --print mode stdout carries only the answer, so progress goes to stderr.
+  const progress = options.print ? process.stderr : process.stdout;
+
+  if (!options.json && !options.print) {
     process.stdout.write(chalk.green("flixa: "));
   }
 
   try {
+    const guards = loadToolGuards(cwd(), session.id);
+    const prepared = await prepareUserPrompt(prompt, guards);
+    if (prepared.blockedReason) {
+      throw new Error(prepared.blockedReason);
+    }
+    if (!options.json) {
+      for (const notice of prepared.notices) {
+        progress.write(`\n${chalk.dim(`· ${notice}`)}\n`);
+      }
+    }
+    const modelPrompt = prepared.prompt;
+
+    let historyForTurn = session.history;
+    if (shouldAutoCompact(session.history)) {
+      try {
+        const compacted = await compactHistory({
+          history: session.history,
+          generate: createSummaryGenerator({
+            context: resolveProviderContext({
+              provider: options.provider,
+              model: options.model,
+              baseUrl: options.baseUrl,
+            }),
+            apiKey,
+            model: options.model,
+            baseUrl: options.baseUrl,
+          }),
+        });
+        historyForTurn = compacted.history;
+        if (!options.json) {
+          progress.write(`\n${chalk.dim(`· Auto-compact: ${formatCompactResult(compacted)}`)}\n`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!options.json) {
+          progress.write(`\n${chalk.yellow(`· Auto-compact skipped: ${message}`)}\n`);
+        }
+      }
+    }
+
     if (options.provider && options.provider !== "flixa") {
       const result = await runSharedAgentTurn({
         provider: options.provider,
         model: options.model,
         baseUrl: options.baseUrl,
-        prompt,
-        history: session.history,
+        prompt: modelPrompt,
+        guards,
+        history: historyForTurn,
         system: turnSystemPrompt,
         maxOutputTokens: options.maxOutputTokens,
         planMode: options.planMode,
@@ -269,7 +333,7 @@ async function runSingleTurn(
           ? createProviderToolSafetyReviewer(options.provider, options.model, options.baseUrl)
           : undefined,
         requestToolApproval:
-          options.yolo || (process.stdin.isTTY && process.stdout.isTTY)
+          options.yolo || (!options.print && process.stdin.isTTY && process.stdout.isTTY)
             ? options.yolo
               ? allowAllToolApprovals
               : promptForToolApproval
@@ -278,9 +342,9 @@ async function runSingleTurn(
           ? undefined
           : (event) => {
               if (event.type === "tool_start") {
-                process.stdout.write(`\n${chalk.dim(`· ${event.summary}`)}\n`);
+                progress.write(`\n${chalk.dim(`· ${event.summary}`)}\n`);
               } else if (event.type === "tool_result" && event.summary.startsWith("Denied ")) {
-                process.stdout.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
+                progress.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
               }
             },
       });
@@ -316,8 +380,9 @@ async function runSingleTurn(
     const result = await runAgentTurn({
       apiKey,
       model: options.model,
-      history: session.history,
-      prompt,
+      history: historyForTurn,
+      prompt: modelPrompt,
+      guards,
       system: turnSystemPrompt,
       baseUrl: options.baseUrl,
       maxOutputTokens: options.maxOutputTokens,
@@ -328,19 +393,19 @@ async function runSingleTurn(
       reviewToolSafety: resolvedModes.yoloMode ? undefined : reviewToolSafety,
       requestToolApproval: options.yolo
         ? allowAllToolApprovals
-        : options.json || !process.stdin.isTTY || !process.stdout.isTTY
+        : options.json || options.print || !process.stdin.isTTY || !process.stdout.isTTY
           ? undefined
           : promptForToolApproval,
       onEvent: options.json
         ? undefined
         : (event) => {
             if (event.type === "tool_start") {
-              process.stdout.write(`\n${chalk.dim(`· ${event.summary}`)}\n`);
+              progress.write(`\n${chalk.dim(`· ${event.summary}`)}\n`);
               return;
             }
 
             if (event.type === "tool_result" && event.summary.startsWith("Denied ")) {
-              process.stdout.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
+              progress.write(`\n${chalk.yellow(`· ${event.summary}`)}\n`);
             }
           },
     });
@@ -361,6 +426,10 @@ async function runSingleTurn(
     if (options.json) {
       console.log(JSON.stringify(rawResponse, null, 2));
       console.log();
+    } else if (options.print) {
+      if (assistantText) {
+        process.stdout.write(`${assistantText}\n`);
+      }
     } else {
       if (result.thinkingText?.trim()) {
         console.log(`\n${chalk.dim("thinking")}`);
@@ -373,7 +442,7 @@ async function runSingleTurn(
       }
     }
   } catch (error) {
-    if (!options.json) {
+    if (!options.json && !options.print) {
       process.stdout.write("\n");
     }
     const message = error instanceof Error ? error.message : String(error);

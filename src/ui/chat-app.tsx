@@ -35,6 +35,32 @@ import {
 } from "../sessions/store.ts";
 import { setPersistedModel, setPersistedModeDefaults } from "../config/store.ts";
 import { buildInstructionSystemPrompt } from "../instructions/files.ts";
+import {
+  expandCustomCommand,
+  findCustomCommand,
+  loadCustomCommands,
+  type CustomCommand,
+} from "../slash/custom-commands.ts";
+import { getCheckpointStore, resetTodos } from "../agent-tools/tools.ts";
+import { loadToolGuards, prepareUserPrompt, runStopHooks } from "../agent-tools/guards.ts";
+import { getActiveMention, listMentionCandidates } from "../mentions/files.ts";
+import { parseMemoryShortcut } from "../memory/memory.ts";
+import { runDoctor, formatDoctorReport } from "../commands/doctor.ts";
+import {
+  formatAgentsList,
+  formatHooksReport,
+  formatPermissionsReport,
+  formatSkillsList,
+  runExportCommand,
+  runMemoryCommand,
+  runRewindCommand,
+} from "./slash-handlers.ts";
+import {
+  compactHistory,
+  createSummaryGenerator,
+  formatCompactResult,
+  shouldAutoCompact,
+} from "../compact/compact.ts";
 import { renderMarkdownToLines } from "./markdown.ts";
 import { CLI_VERSION } from "../version.ts";
 import {
@@ -136,6 +162,15 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "/continue", description: "load latest session for this directory" },
   { name: "/resume", description: "resume a session by id or recent" },
   { name: "/init", description: "create or improve AGENTS.md for this repo" },
+  { name: "/compact", description: "summarize the conversation to free up context" },
+  { name: "/rewind", description: "undo the agent's file edits (/rewind [turns|list])" },
+  { name: "/export", description: "save this conversation as Markdown" },
+  { name: "/memory", description: "show or add project/user memory notes (# note)" },
+  { name: "/doctor", description: "check your setup (git, ripgrep, credentials, network)" },
+  { name: "/agents", description: "list available sub-agents" },
+  { name: "/skills", description: "list available skills" },
+  { name: "/permissions", description: "show allow/ask/deny permission rules" },
+  { name: "/hooks", description: "show configured lifecycle hooks" },
   { name: "/ship", description: "run a guarded build mission", aliases: ["/run"] },
   {
     name: "/share",
@@ -201,7 +236,33 @@ function InteractiveChatApp({
   const approvalRejectRef = useRef<((error: Error) => void) | null>(null);
   const approvalCleanupRef = useRef<(() => void) | null>(null);
   const cwdValue = activeSession.cwd || cwd();
-  const commandSuggestions = useMemo(() => getCommandSuggestions(input), [input]);
+  const customCommands = useMemo(
+    () =>
+      loadCustomCommands(
+        cwdValue,
+        SLASH_COMMANDS.flatMap((command) => [command.name, ...(command.aliases ?? [])]),
+      ),
+    [cwdValue],
+  );
+  const allSlashCommands = useMemo<readonly SlashCommand[]>(
+    () => [
+      ...SLASH_COMMANDS,
+      ...customCommands.map((command) => ({
+        name: command.name,
+        description: formatCustomCommandDescription(command),
+      })),
+    ],
+    [customCommands],
+  );
+  const commandSuggestions = useMemo(
+    () => getCommandSuggestions(input, allSlashCommands),
+    [allSlashCommands, input],
+  );
+  const activeMention = useMemo(() => getActiveMention(input), [input]);
+  const mentionCandidates = useMemo(
+    () => (activeMention === null ? [] : listMentionCandidates(activeMention, cwdValue)),
+    [activeMention, cwdValue],
+  );
   const isResumeSelectorOpen = resumeSelectorSessions.length > 0;
   const isModelSelectorOpen = modelSelectorModels.length > 0;
   const isAutocompleteOpen =
@@ -286,6 +347,7 @@ function InteractiveChatApp({
       acceptEdits,
     });
     saveSession(nextSession);
+    resetTodos();
     setActiveSession(nextSession);
     setMessages(buildInitialMessages([], currentModel, nextSession.cwd, currentModelLabel));
     setConversation([]);
@@ -371,6 +433,8 @@ function InteractiveChatApp({
             "You are a safety reviewer for CLI tool calls. Respond with a short verdict only. Approve only if the request is narrowly scoped, justified by the provided reason, and appears safe for the local workspace. Reject if the reason is missing, vague, risky, destructive, or unrelated to the requested action. Format: SAFE: <brief reason> or UNSAFE: <brief reason>.",
           maxOutputTokens: 120,
           planMode: true,
+          // The reviewer only judges text; it must not run tools or start sub-agents.
+          allowedTools: [],
         });
         const verdict = result.text.trim() || "UNSAFE: Empty review response.";
         const normalizedVerdict = verdict.toUpperCase();
@@ -419,7 +483,7 @@ function InteractiveChatApp({
   );
 
   const sendPrompt = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, displayText?: string) => {
       const trimmedPrompt = prompt.trim();
       if (!trimmedPrompt || loading) {
         return;
@@ -428,7 +492,7 @@ function InteractiveChatApp({
       const userMessage: UiMessage = {
         id: randomUUID(),
         role: "user",
-        content: trimmedPrompt,
+        content: displayText?.trim() || trimmedPrompt,
       };
 
       setInput("");
@@ -451,12 +515,52 @@ function InteractiveChatApp({
           trimmedPrompt,
         );
 
+        const guards = loadToolGuards(cwd(), activeSession.id);
+        const prepared = await prepareUserPrompt(trimmedPrompt, guards, abortController.signal);
+        for (const notice of prepared.notices) {
+          appendSystemMessage(notice);
+        }
+        if (prepared.blockedReason) {
+          appendSystemMessage(prepared.blockedReason);
+          setStatus("Prompt blocked by hook");
+          return;
+        }
+        const modelPrompt = prepared.prompt;
+        getCheckpointStore(cwdValue).beginTurn(trimmedPrompt.slice(0, 60));
+
+        let historyForTurn = conversation;
+        if (shouldAutoCompact(conversation)) {
+          setStatus("Compacting conversation…");
+          try {
+            const compacted = await compactHistory({
+              history: conversation,
+              generate: createSummaryGenerator({
+                context: providerContext,
+                apiKey,
+                model: providerContext.model,
+                baseUrl: options.baseUrl,
+                signal: abortController.signal,
+              }),
+            });
+            historyForTurn = compacted.history;
+            appendSystemMessage(`Auto-compact: ${formatCompactResult(compacted)}`);
+          } catch (error) {
+            if (abortController.signal.aborted) {
+              throw error;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            appendSystemMessage(`Auto-compact skipped: ${message}`);
+          }
+          setStatus("Working…");
+        }
+
         if (providerContext.provider === "flixa") {
           const result = await runAgentTurn({
             apiKey,
             model: currentModel,
-            history: conversation,
-            prompt: trimmedPrompt,
+            history: historyForTurn,
+            prompt: modelPrompt,
+            guards,
             system: turnSystemPrompt,
             baseUrl: options.baseUrl,
             maxOutputTokens: options.maxOutputTokens,
@@ -519,8 +623,9 @@ function InteractiveChatApp({
             provider: providerContext.provider,
             model: providerContext.model,
             baseUrl: providerContext.baseUrl,
-            history: conversation,
-            prompt: trimmedPrompt,
+            history: historyForTurn,
+            prompt: modelPrompt,
+            guards,
             system: turnSystemPrompt,
             maxOutputTokens: options.maxOutputTokens,
             signal: abortController.signal,
@@ -569,6 +674,10 @@ function InteractiveChatApp({
           saveSession(nextSession);
           setStatus(displayText ? "Ready" : "No assistant text returned");
         }
+
+        for (const notice of await runStopHooks(guards, abortController.signal)) {
+          appendSystemMessage(notice);
+        }
       } catch (error) {
         if (abortController.signal.aborted) {
           appendSystemMessage("Request canceled.");
@@ -600,9 +709,80 @@ function InteractiveChatApp({
       planMode,
       acceptEdits,
       activeSession,
+      cwdValue,
       reviewToolSafety,
       requestToolApproval,
       settleApprovalRequest,
+    ],
+  );
+
+  const compactConversation = useCallback(
+    async (instructions?: string) => {
+      if (loading) {
+        appendSystemMessage("Wait for the current request to finish first.");
+        return;
+      }
+
+      setInput("");
+      if (conversation.length < 2) {
+        appendSystemMessage("Nothing to compact yet.");
+        return;
+      }
+
+      const abortController = new AbortController();
+      abortRef.current = abortController;
+      setLoading(true);
+      setStatus("Compacting conversation…");
+
+      try {
+        const providerContext = resolveProviderContext({
+          provider: options.provider,
+          model: currentModel,
+          baseUrl: options.baseUrl,
+        });
+        const result = await compactHistory({
+          history: conversation,
+          instructions,
+          generate: createSummaryGenerator({
+            context: providerContext,
+            apiKey,
+            model: providerContext.model,
+            baseUrl: options.baseUrl,
+            signal: abortController.signal,
+          }),
+        });
+
+        setConversation(result.history);
+        const nextSession = { ...activeSession, history: result.history };
+        setActiveSession(nextSession);
+        saveSession(nextSession);
+        appendSystemMessage(formatCompactResult(result));
+        setStatus("Conversation compacted");
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          appendSystemMessage("Compaction canceled.");
+          setStatus("Compaction canceled");
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          appendSystemMessage(`Compaction failed: ${message}`);
+          setStatus("Compaction failed");
+        }
+      } finally {
+        if (abortRef.current === abortController) {
+          abortRef.current = null;
+        }
+        setLoading(false);
+      }
+    },
+    [
+      activeSession,
+      apiKey,
+      appendSystemMessage,
+      conversation,
+      currentModel,
+      loading,
+      options.baseUrl,
+      options.provider,
     ],
   );
 
@@ -898,6 +1078,13 @@ function InteractiveChatApp({
         return;
       }
 
+      const memoryNote = parseMemoryShortcut(trimmed);
+      if (memoryNote !== null) {
+        appendSystemMessage(runMemoryCommand(`project ${memoryNote}`, cwdValue));
+        setInput("");
+        return;
+      }
+
       if (!trimmed.startsWith("/")) {
         await sendPrompt(trimmed);
         return;
@@ -922,7 +1109,7 @@ function InteractiveChatApp({
       }
 
       if (trimmed === "/help") {
-        appendSystemMessage(buildHelpMessage());
+        appendSystemMessage(buildHelpMessage(customCommands));
         setInput("");
         return;
       }
@@ -955,6 +1142,53 @@ function InteractiveChatApp({
 
       if (trimmed === "/diff") {
         showGitDiff();
+        return;
+      }
+
+      if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
+        await compactConversation(trimmed.slice("/compact".length).trim() || undefined);
+        return;
+      }
+
+      const [commandWord = "", ...commandRest] = trimmed.split(/\s+/);
+      const commandArgs = commandRest.join(" ");
+      const infoMessage = ((): string | null => {
+        switch (commandWord) {
+          case "/rewind":
+            return runRewindCommand(commandArgs, cwdValue);
+          case "/export":
+            return runExportCommand(commandArgs, cwdValue, activeSession, conversation);
+          case "/memory":
+            return runMemoryCommand(commandArgs, cwdValue);
+          case "/agents":
+            return formatAgentsList(cwdValue);
+          case "/skills":
+            return formatSkillsList(cwdValue);
+          case "/permissions":
+            return formatPermissionsReport(cwdValue);
+          case "/hooks":
+            return formatHooksReport(cwdValue);
+          default:
+            return null;
+        }
+      })();
+      if (infoMessage !== null) {
+        appendSystemMessage(infoMessage);
+        setInput("");
+        return;
+      }
+
+      if (commandWord === "/doctor") {
+        setInput("");
+        setStatus("Running diagnostics…");
+        try {
+          appendSystemMessage(formatDoctorReport(await runDoctor({ cwd: cwdValue })));
+          setStatus("Ready");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          appendSystemMessage(`Doctor failed: ${message}`);
+          setStatus("Doctor failed");
+        }
         return;
       }
 
@@ -1021,6 +1255,12 @@ function InteractiveChatApp({
         return;
       }
 
+      const customMatch = findCustomCommand(customCommands, trimmed);
+      if (customMatch) {
+        await sendPrompt(expandCustomCommand(customMatch.command, customMatch.args), trimmed);
+        return;
+      }
+
       appendSystemMessage(`Unknown command: ${trimmed}`);
       setInput("");
     },
@@ -1029,6 +1269,10 @@ function InteractiveChatApp({
       appendSystemMessage,
       clearConversation,
       commandSuggestions,
+      compactConversation,
+      conversation,
+      customCommands,
+      cwdValue,
       currentModel,
       exit,
       openModelSelector,
@@ -1177,6 +1421,13 @@ function InteractiveChatApp({
         const completion = selectedCommandSuggestion;
         if (completion) {
           setInput(formatCommandInput(completion.name));
+          return;
+        }
+
+        const firstCandidate = mentionCandidates[0];
+        if (firstCandidate !== undefined && activeMention !== null) {
+          const token = /\s/.test(firstCandidate) ? `@"${firstCandidate}"` : `@${firstCandidate}`;
+          setInput(`${input.slice(0, input.length - activeMention.length - 1)}${token}`);
         }
       }
     },
@@ -1261,6 +1512,9 @@ function InteractiveChatApp({
           />
         ) : isModelSelectorOpen ? (
           <ModelSelector models={modelSelectorModels} selectedIndex={selectedModelIndex} />
+        ) : null}
+        {!pendingApproval && !isAutocompleteOpen && mentionCandidates.length > 0 ? (
+          <Text color={COLORS.dim}>@ Tab: {mentionCandidates.join("  ")}</Text>
         ) : null}
         {!pendingApproval && isAutocompleteOpen ? (
           <CommandAutocomplete
@@ -1634,17 +1888,26 @@ function truncateEnd(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - 1)}…`;
 }
 
-function getCommandSuggestions(input: string): readonly SlashCommandSuggestion[] {
+function formatCustomCommandDescription(command: CustomCommand): string {
+  const hint = command.argumentHint ? ` ${command.argumentHint}` : "";
+  return `${command.description}${hint} (${command.scope})`;
+}
+
+function getCommandSuggestions(
+  input: string,
+  commands: readonly SlashCommand[] = SLASH_COMMANDS,
+): readonly SlashCommandSuggestion[] {
   if (!isCommandInput(input) || hasCommandArgs(input)) {
     return [];
   }
 
   const query = input.slice(1).trim().toLowerCase();
   if (query === "") {
-    return [...SLASH_COMMANDS].sort((left, right) => left.name.localeCompare(right.name));
+    return [...commands].sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  return SLASH_COMMANDS.map((command) => rankCommandSuggestion(command, query))
+  return commands
+    .map((command) => rankCommandSuggestion(command, query))
     .filter((suggestion): suggestion is RankedSlashCommand => suggestion !== null)
     .sort(compareRankedSlashCommands)
     .map(({ command, matchedAlias }) => ({ ...command, matchedAlias }));
@@ -1964,7 +2227,18 @@ function createAbortError(): Error {
   return error;
 }
 
-function buildHelpMessage(): string {
+function buildHelpMessage(customCommands: readonly CustomCommand[] = []): string {
+  const customSection =
+    customCommands.length > 0
+      ? [
+          "",
+          "Custom commands (.claude/commands, .flixa/commands)",
+          ...customCommands.map(
+            (command) => `  ${command.name.padEnd(21)} ${formatCustomCommandDescription(command)}`,
+          ),
+        ]
+      : [];
+
   return [
     "Flixa understands your codebase, makes edits with your permission, and executes commands from your terminal.",
     "",
@@ -1983,12 +2257,14 @@ function buildHelpMessage(): string {
     "  /continue             load the latest session for this directory",
     "  /resume [sessionId]   resume a saved session",
     "  /init                 create or improve AGENTS.md for this repo",
+    "  /compact [focus]      summarize the conversation to free up context",
     "  /ship <task>          run an inspect -> edit -> verify mission",
     "  /diff                 show the current git diff summary",
     "  /share [path]         create a redacted share card",
     "  /model [id]           open model selector or switch model",
     "  /usage                show plan and quota usage",
     "  /exit, /quit          exit Flixa CLI",
+    ...customSection,
   ].join("\n");
 }
 

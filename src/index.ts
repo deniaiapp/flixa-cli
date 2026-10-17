@@ -9,6 +9,7 @@ import { registerChatCommand } from "./commands/chat.ts";
 import { registerModelCommand } from "./commands/model.ts";
 import { registerUsageCommand } from "./commands/usage.ts";
 import { registerProvidersCommand } from "./commands/providers.ts";
+import { registerDoctorCommand } from "./commands/doctor.ts";
 import { warnIfElevated } from "./security/privileges.ts";
 import { CLI_VERSION } from "./version.ts";
 
@@ -26,6 +27,7 @@ registerLoginCommand(program);
 registerModelCommand(program);
 registerUsageCommand(program);
 registerProvidersCommand(program);
+registerDoctorCommand(program);
 registerClaudeCodeCommand(program);
 registerCodexCommand(program);
 registerShipCommand(program);

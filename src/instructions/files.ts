@@ -1,6 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
+import { loadSkills, formatSkillsForPrompt } from "../skills/skills.ts";
+import { formatSubagentListForPrompt, loadSubagents } from "../subagents/definitions.ts";
+
+// Personal notes saved with `# note` / `/memory user`; loaded before repository files.
+const USER_MEMORY_FILE = join(".flixa", "AGENTS.md");
 
 const INSTRUCTION_CANDIDATES = ["CLAUDE.md", "AGENTS.md", join(".claude", "CLAUDE.md")] as const;
 
@@ -23,6 +29,16 @@ export function buildInstructionSystemPrompt(
   const gitContextBlock = formatGitContext(cwdValue);
   if (gitContextBlock) {
     parts.push(gitContextBlock);
+  }
+
+  const skillsBlock = formatSkillsForPrompt(loadSkills(cwdValue));
+  if (skillsBlock) {
+    parts.push(skillsBlock);
+  }
+
+  const customSubagents = loadSubagents(cwdValue).filter((agent) => agent.source !== "builtin");
+  if (customSubagents.length > 0) {
+    parts.push(formatSubagentListForPrompt(loadSubagents(cwdValue)));
   }
 
   const commitWorkflowBlock = formatCommitWorkflowInstructions(latestUserPrompt);
@@ -54,6 +70,20 @@ function loadInstructionFiles(cwdValue: string): LoadedInstructionFile[] {
 
   const loaded: LoadedInstructionFile[] = [];
   const seen = new Set<string>();
+
+  // Loaded first so repository files stay "more specific" and win.
+  const userMemoryPath = resolve(homedir(), USER_MEMORY_FILE);
+  try {
+    const userMemory = existsSync(userMemoryPath)
+      ? readFileSync(userMemoryPath, "utf-8").trim()
+      : "";
+    if (userMemory) {
+      seen.add(userMemoryPath);
+      loaded.push({ path: userMemoryPath, content: userMemory });
+    }
+  } catch {
+    // An unreadable personal file must not break the session.
+  }
 
   for (const directory of directories.reverse()) {
     for (const candidate of INSTRUCTION_CANDIDATES) {
