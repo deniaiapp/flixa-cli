@@ -81,7 +81,6 @@ function selectFeaturedModels(rawModels) {
         String(left.last_updated ?? left.release_date ?? ""),
       );
     })
-    .slice(0, 12)
     .map((model) => ({
       id: model.id,
       name: typeof model.name === "string" && model.name.trim() ? model.name : model.id,
