@@ -11,26 +11,28 @@ export function formatUsageReport(usage: DeniUsageInfo): string {
     `  Max mode: ${formatMaxMode(usage)}`,
   ];
 
-  if (usage.usage.length === 0) {
-    lines.push("", "No usage buckets returned.");
+  // Usage is not split by model class: Flixa, Deni AI chat, and Deni Run share one
+  // monthly pool. Every bucket reports it (older servers split it; then "basic" stands for it).
+  const pool = usage.usage.find((bucket) => bucket.category === "basic") ?? usage.usage[0];
+  if (!pool) {
+    lines.push("", "No usage returned.");
     return lines.join("\n");
   }
 
-  lines.push("", "Limits");
-  for (const bucket of usage.usage) {
-    lines.push(...formatUsageBucket(bucket));
-  }
-
+  lines.push("", ...formatPool(pool));
   return lines.join("\n");
 }
 
-function formatUsageBucket(bucket: DeniUsageBucket): string[] {
+function formatPool(bucket: DeniUsageBucket): string[] {
+  if (bucket.limit === null || bucket.limit <= 0 || bucket.remaining === null) {
+    return ["Monthly usage", "  unlimited"];
+  }
+  const left = Math.max(0, Math.min(100, (bucket.remaining / bucket.limit) * 100));
   return [
-    `  ${bucket.category} (${bucket.unit})`,
-    `    used: ${bucket.used}`,
-    `    limit: ${bucket.limit ?? "-"}`,
-    `    remaining: ${bucket.remaining ?? "-"}`,
-    `    period: ${bucket.periodStart} -> ${bucket.periodEnd ?? "-"}`,
+    "Monthly usage (shared with Deni AI chat and Deni Run)",
+    `  used: ${(100 - left).toFixed(1)}%`,
+    `  left: ${left.toFixed(1)}%`,
+    `  resets: ${bucket.periodEnd ?? "-"}`,
   ];
 }
 
